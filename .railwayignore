@@ -1,0 +1,11 @@
+frontend/
+frontend/node_modules/
+.next/
+pycache/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+sdk/
+demo/
+agents/

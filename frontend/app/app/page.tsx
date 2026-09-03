@@ -8,9 +8,7 @@ import { OutcomeRecorder } from "@/components/OutcomeRecorder";
 import { DemoRunner } from "@/components/DemoRunner";
 import { WipePanel } from "@/components/WipePanel";
 import { Database, Sparkles, RefreshCw } from "lucide-react";
-
-const API_BASE = "http://localhost:8000";
-const DEMO_KEY = "lmn_demo0000000000000000000000000000";
+import { apiFetch } from "@/lib/api";
 
 export default function ConsolePage() {
   const [pitchBrief, setPitchBrief] = useState<BriefData | null>(null);
@@ -48,20 +46,11 @@ export default function ConsolePage() {
 
       setLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/brief`, {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "X-Lumen-Key": DEMO_KEY,
-          },
-          body: JSON.stringify({
-            user_id: "alex",
-            domain,
-            context,
-          }),
-        });
-        if (!res.ok) throw new Error("API error");
-        const data = (await res.json()) as BriefData;
+        const data = (await apiFetch("/brief", {
+          user_id: "alex",
+          domain,
+          context,
+        })) as BriefData;
         setBrief(data);
         setIsApiOnline(true);
         return data;
@@ -97,15 +86,7 @@ export default function ConsolePage() {
   const handleQuickSeed = async () => {
     setIsSeeding(true);
     try {
-      const res = await fetch(`${API_BASE}/seed`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Lumen-Key": DEMO_KEY,
-        },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error("Seed failed");
+      await apiFetch("/seed", {});
       setDemoStep(1);
       setStepLabel("Session 1 — Memory loaded from Sibyl");
       setActionTaken("Seeded 33 outcomes into Sibyl memory");
@@ -124,37 +105,20 @@ export default function ConsolePage() {
     outcome: string,
     signal: number
   ) => {
-    const res = await fetch(`${API_BASE}/record`, {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "X-Lumen-Key": DEMO_KEY,
-      },
-      body: JSON.stringify({
-        user_id: "alex",
-        domain,
-        action,
-        outcome,
-        signal,
-      }),
+    await apiFetch("/record", {
+      user_id: "alex",
+      domain,
+      action,
+      outcome,
+      signal,
     });
-    if (!res.ok) throw new Error("Failed to record outcome");
     await refreshAllBriefs();
   };
 
   // Handler for Demo Step Runner
   const handleRunStep = async (step: number) => {
     try {
-      const res = await fetch(`${API_BASE}/demo/step`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Lumen-Key": DEMO_KEY,
-        },
-        body: JSON.stringify({ step }),
-      });
-      if (!res.ok) throw new Error("Step execution failed");
-      const data = await res.json();
+      const data = await apiFetch("/demo/step", { step });
       setDemoStep(data.step);
       setStepLabel(data.step_label);
       setActionTaken(data.action_taken);
@@ -170,16 +134,7 @@ export default function ConsolePage() {
   // Handler for Reset Demo
   const handleResetDemo = async () => {
     try {
-      const res = await fetch(`${API_BASE}/demo/step`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Lumen-Key": DEMO_KEY,
-        },
-        body: JSON.stringify({ step: 5 }),
-      });
-      if (!res.ok) throw new Error("Reset failed");
-      const data = await res.json();
+      const data = await apiFetch("/demo/step", { step: 5 });
       setDemoStep(0);
       setStepLabel(data.step_label);
       setActionTaken(data.action_taken);
@@ -194,15 +149,7 @@ export default function ConsolePage() {
   // Handler for Wipe Memory
   const handleWipeMemory = async () => {
     try {
-      const res = await fetch(`${API_BASE}/wipe`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Lumen-Key": DEMO_KEY,
-        },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error("Wipe failed");
+      await apiFetch("/wipe", {});
       setDemoStep(4);
       setStepLabel("Session After Wipe — Memory deleted, agent blind");
       setActionTaken("Deleted ~/.sibyl-memory/lumen_demo.db");

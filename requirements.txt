@@ -1,2 +1,6 @@
 sibyl-memory-client==0.8.0
 pytest
+fastapi
+uvicorn[standard]
+pydantic
+requests

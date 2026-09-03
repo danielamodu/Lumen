@@ -251,6 +251,12 @@ def create_tenant_endpoint(
     }
 
 
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Railway deployment."""
+    return {"status": "ok", "service": "lumen-api"}
+
+
 @app.get("/tenants/me")
 def get_tenant_info(
     api_key: str = Security(api_key_header),
@@ -265,4 +271,5 @@ def get_tenant_info(
 
 
 if __name__ == "__main__":
-    uvicorn.run("api.server:app", host="0.0.0.0", port=8000, reload=False)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
