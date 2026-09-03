@@ -176,3 +176,93 @@ class Lumen:
             raise LumenAPIError(response.status_code, detail)
             
         return response.json()
+
+    def register_webhook(
+        self,
+        user_id: str,
+        domain: str,
+        callback_url: str,
+        threshold: float = 0.10
+    ) -> dict:
+        """Register a webhook for pattern shift notifications.
+        
+        Args:
+            user_id: The user to watch.
+            domain: The domain to watch.
+            callback_url: URL to POST when pattern shifts.
+            threshold: Minimum shift to trigger (default 0.10).
+            
+        Returns:
+            Webhook dict including id for later deletion.
+        """
+        return self._post("/webhooks", {
+            "user_id": user_id,
+            "domain": domain,
+            "callback_url": callback_url,
+            "threshold": threshold
+        })
+
+    def list_webhooks(
+        self,
+        user_id: str = "alex",
+        domain: str = None
+    ) -> dict:
+        """List registered webhooks."""
+        params = f"?user_id={user_id}"
+        if domain:
+            params += f"&domain={domain}"
+        return self._get(f"/webhooks{params}")
+
+    def delete_webhook(self, webhook_id: str) -> dict:
+        """Delete a webhook by ID."""
+        return self._delete(f"/webhooks/{webhook_id}")
+
+    def _get(self, endpoint: str) -> dict:
+        """Make a GET request to the Lumen API."""
+        url = f"{self.base_url}{endpoint}"
+        try:
+            response = self.session.get(
+                url, timeout=self.timeout
+            )
+        except requests.exceptions.ConnectionError:
+            raise LumenConnectionError(
+                f"Cannot reach Lumen API at {self.base_url}."
+            )
+        except requests.exceptions.Timeout:
+            raise LumenConnectionError(
+                f"Request to {url} timed out after {self.timeout}s."
+            )
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get(
+                    "detail", response.text
+                )
+            except Exception:
+                detail = response.text
+            raise LumenAPIError(response.status_code, detail)
+        return response.json()
+
+    def _delete(self, endpoint: str) -> dict:
+        """Make a DELETE request to the Lumen API."""
+        url = f"{self.base_url}{endpoint}"
+        try:
+            response = self.session.delete(
+                url, timeout=self.timeout
+            )
+        except requests.exceptions.ConnectionError:
+            raise LumenConnectionError(
+                f"Cannot reach Lumen API at {self.base_url}."
+            )
+        except requests.exceptions.Timeout:
+            raise LumenConnectionError(
+                f"Request to {url} timed out after {self.timeout}s."
+            )
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get(
+                    "detail", response.text
+                )
+            except Exception:
+                detail = response.text
+            raise LumenAPIError(response.status_code, detail)
+        return response.json()

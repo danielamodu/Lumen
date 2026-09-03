@@ -16,6 +16,10 @@ import uvicorn
 
 from lumen.core import record, brief
 from lumen.memory import get_client
+from lumen.webhooks import (
+    register_webhook, delete_webhook, 
+    list_webhooks, check_and_fire_webhooks
+)
 from demo.seed import seed_outcomes
 from api.auth import (
     resolve_tenant,
@@ -57,6 +61,22 @@ class RecordRequest(BaseModel):
     action: str
     outcome: str
     signal: int
+
+
+class WebhookCreateRequest(BaseModel):
+    user_id: str
+    domain: str
+    callback_url: str
+    threshold: float = 0.10
+
+    @field_validator("threshold")
+    @classmethod
+    def validate_threshold(cls, v):
+        if not 0.01 <= v <= 1.0:
+            raise ValueError(
+                "Threshold must be between 0.01 and 1.0"
+            )
+        return v
 
     @field_validator("domain")
     @classmethod
@@ -117,12 +137,75 @@ def record_outcome(
     tenant = resolve_tenant(api_key)
     scoped_user = scope_user_id(tenant["tenant_id"], req.user_id)
     try:
-        record(scoped_user, req.domain, req.action, req.outcome, req.signal)
+        record(
+            scoped_user,
+            req.domain,
+            req.action,
+            req.outcome,
+            req.signal,
+            tenant_id=tenant["tenant_id"]
+        )
         return {"status": "ok", "message": "Outcome recorded."}
     except ValueError as val_err:
         raise HTTPException(status_code=400, detail=str(val_err))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/webhooks")
+def create_webhook(
+    req: WebhookCreateRequest,
+    api_key: str = Security(api_key_header)
+):
+    """Register a webhook for pattern shift notifications."""
+    tenant = resolve_tenant(api_key)
+    scoped_user = scope_user_id(
+        tenant["tenant_id"], req.user_id
+    )
+    webhook = register_webhook(
+        tenant_id=tenant["tenant_id"],
+        user_id=scoped_user,
+        domain=req.domain,
+        callback_url=req.callback_url,
+        threshold=req.threshold
+    )
+    return webhook
+
+
+@app.get("/webhooks")
+def get_webhooks(
+    user_id: str = "alex",
+    domain: str = None,
+    api_key: str = Security(api_key_header)
+):
+    """List webhooks for the current tenant."""
+    tenant = resolve_tenant(api_key)
+    scoped_user = scope_user_id(
+        tenant["tenant_id"], user_id
+    )
+    webhooks = list_webhooks(
+        tenant_id=tenant["tenant_id"],
+        user_id=scoped_user,
+        domain=domain
+    )
+    return {"webhooks": webhooks, "count": len(webhooks)}
+
+
+@app.delete("/webhooks/{webhook_id}")
+def remove_webhook(
+    webhook_id: str,
+    api_key: str = Security(api_key_header)
+):
+    """Delete a webhook."""
+    tenant = resolve_tenant(api_key)
+    deleted = delete_webhook(webhook_id, tenant["tenant_id"])
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Webhook not found or access denied."
+        )
+    return {"status": "ok", 
+            "message": f"Webhook {webhook_id} deleted."}
 
 
 @app.post("/wipe")

@@ -87,15 +87,23 @@ def _recalculate_patterns(user_id: str, domain: str) -> dict:
     return pattern_body
 
 
-def record(user_id: str, domain: str, action: str, outcome: str, signal: int) -> None:
+def record(
+    user_id: str,
+    domain: str,
+    action: str,
+    outcome: str,
+    signal: int,
+    tenant_id: str = "demo"
+) -> None:
     """Record one outcome to Sibyl memory and recalculate patterns for user+domain.
 
     Parameters:
     - user_id: str — identifies the user
-    - domain: str — one of "pitch", "post", "ask"
+    - domain: str — non-empty string identifying domain
     - action: str — what the user tried
     - outcome: str — what happened
     - signal: int — must be -1 (loss), 0 (neutral), or 1 (win)
+    - tenant_id: str — multi-tenant isolation id (defaults to 'demo')
     """
     if not domain or not isinstance(domain, str):
         raise ValueError("Domain must be a non-empty string.")
@@ -104,6 +112,15 @@ def record(user_id: str, domain: str, action: str, outcome: str, signal: int) ->
         raise ValueError(f"Signal must be -1, 0, or 1, got {signal}")
 
     memory = get_client()
+
+    # Capture pattern BEFORE recalculation
+    pattern_entity_before = _safe_get_entity(
+        memory, "pattern", f"{user_id}:{domain}"
+    )
+    pattern_before = (
+        pattern_entity_before.get("body") 
+        if pattern_entity_before else None
+    )
 
     # 1. Get or create WARM entity for user
     user_entity = _safe_get_entity(memory, "user", user_id)
@@ -129,7 +146,20 @@ def record(user_id: str, domain: str, action: str, outcome: str, signal: int) ->
     memory.write_event(acted=[event_str])
 
     # 3. Recalculate pattern for user+domain
-    _recalculate_patterns(user_id, domain)
+    pattern_after = _recalculate_patterns(user_id, domain)
+
+    # Check and fire webhooks
+    if pattern_before is not None:
+        current_brief = brief(user_id, domain, "")
+        from lumen.webhooks import check_and_fire_webhooks
+        check_and_fire_webhooks(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            domain=domain,
+            pattern_before=pattern_before,
+            pattern_after=pattern_after,
+            current_brief=current_brief
+        )
 
 
 def brief(user_id: str, domain: str, context: str) -> dict:

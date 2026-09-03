@@ -117,3 +117,39 @@ def test_custom_domain_works():
     assert result["pattern"] is not None
     assert result["warning"] is not None
 
+
+def test_webhook_fires_on_pattern_shift():
+    """Webhook check_and_fire_webhooks detects 
+    significant shift."""
+    from lumen.webhooks import check_and_fire_webhooks
+    
+    pattern_before = {
+        "win_rate": 0.30,
+        "loss_rate": 0.70,
+        "avg_signal": -0.40
+    }
+    pattern_after = {
+        "win_rate": 0.60,
+        "loss_rate": 0.40,
+        "avg_signal": 0.20
+    }
+    current_brief = {
+        "warning": None,
+        "pattern": "High win rate (60%)",
+        "cross_domain": None,
+        "confidence": "10 outcomes recorded.",
+        "raw_outcomes": 10
+    }
+    
+    # No webhooks registered — should return 0
+    fired = check_and_fire_webhooks(
+        tenant_id="test_tenant",
+        user_id="test_user",
+        domain="test_domain",
+        pattern_before=pattern_before,
+        pattern_after=pattern_after,
+        current_brief=current_brief
+    )
+    assert fired == 0
+
+
