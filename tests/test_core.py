@@ -153,3 +153,45 @@ def test_webhook_fires_on_pattern_shift():
     assert fired == 0
 
 
+def test_market_brief_requires_payment():
+    """Market brief returns 402 without payment proof."""
+    import os
+    import requests
+    
+    api_url = os.environ.get("LUMEN_API_URL", "https://lumen-memory-production.up.railway.app")
+    try:
+        response = requests.post(
+            f"{api_url}/market/brief",
+            json={"domain": "pitch", "context": "test"},
+            headers={
+                "Content-Type": "application/json",
+                "X-Lumen-Key": "lmn_demo0000000000000000000000000000"
+            },
+            timeout=10
+        )
+        assert response.status_code == 402
+        data = response.json()
+        assert data["error"] == "payment_required"
+        assert data["currency"] == "USDC"
+        assert data["network"] == "base"
+    except Exception:
+        # Fallback to TestClient
+        from fastapi.testclient import TestClient
+        from api.server import app
+        client = TestClient(app)
+        response = client.post(
+            "/market/brief",
+            json={"domain": "pitch", "context": "test"},
+            headers={
+                "Content-Type": "application/json",
+                "X-Lumen-Key": "lmn_demo0000000000000000000000000000"
+            }
+        )
+        assert response.status_code == 402
+        data = response.json()
+        assert data["error"] == "payment_required"
+        assert data["currency"] == "USDC"
+        assert data["network"] == "base"
+
+
+

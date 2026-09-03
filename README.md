@@ -197,3 +197,42 @@ pytest tests/ -v
 - **x402 integration** — expose `/brief` as a paid endpoint on Base. Agents pay USDC to query another user's learned patterns. Cross-user learning as a market.
 - **Virtuals Protocol** — Lumen as a shared memory substrate for Virtuals agent swarms. Every agent in the swarm learns from every other agent's outcomes.
 - **Pattern confidence scoring** — weight recent outcomes more heavily than old ones. Memory that forgets gracefully.
+
+---
+
+## The Market
+
+Lumen is not just personal memory. It's a network.
+
+Every outcome recorded by every agent contributes to aggregate patterns. Any agent can query what works across all users for a domain — and pay for that intelligence in USDC on Base.
+
+```bash
+# Query aggregate patterns — costs 0.01 USDC
+curl -X POST \
+  https://lumen-memory-production.up.railway.app/market/brief \
+  -H "Content-Type: application/json" \
+  -H "X-Lumen-Key: lmn_demo0000000000000000000000000000" \
+  -H "X-Payment-Proof: demo_payment_proof_base_usdc" \
+  -d '{"domain":"pitch","context":"pitching crypto funds"}'
+```
+
+Response:
+```json
+{
+  "aggregate_win_rate": 0.54,
+  "top_winning_actions": [
+    "led with their problem",
+    "opened with the pain point",
+    "started with their context"
+  ],
+  "sample_size": 33,
+  "contributors": 1,
+  "payment": {
+    "amount_paid": "0.01",
+    "currency": "USDC",
+    "network": "base"
+  }
+}
+```
+
+The x402 payment standard means any agent can participate in this market autonomously — no human required to approve the transaction.

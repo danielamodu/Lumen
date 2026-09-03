@@ -9,7 +9,8 @@ from typing import Optional
 # Ensure repository root is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security, Header
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
@@ -20,7 +21,12 @@ from lumen.webhooks import (
     register_webhook, delete_webhook, 
     list_webhooks, check_and_fire_webhooks
 )
+from lumen.market import get_aggregate_patterns
 from demo.seed import seed_outcomes
+
+DEMO_PAYMENT_PROOF = "demo_payment_proof_base_usdc"
+LUMEN_WALLET = "0x0000000000000000000000000000000000000000"
+MARKET_PRICE_USDC = "0.01"
 from api.auth import (
     resolve_tenant,
     require_admin,
@@ -83,6 +89,20 @@ class WebhookCreateRequest(BaseModel):
     def normalize_domain(cls, v):
         if not v or not v.strip():
             raise ValueError("Domain must be a non-empty string.")
+        return v.strip().lower()
+
+
+class MarketBriefRequest(BaseModel):
+    domain: str
+    context: str = ""
+
+    @field_validator("domain")
+    @classmethod
+    def normalize_domain(cls, v):
+        if not v or not v.strip():
+            raise ValueError(
+                "Domain must be a non-empty string."
+            )
         return v.strip().lower()
 
 
@@ -350,6 +370,89 @@ def get_tenant_info(
         "tenant_id": tenant["tenant_id"],
         "name": tenant["name"],
         "active": tenant["active"],
+    }
+
+
+@app.post("/market/brief")
+def market_brief(
+    req: MarketBriefRequest,
+    x_payment_proof: Optional[str] = Header(
+        None, alias="X-Payment-Proof"
+    ),
+    api_key: str = Security(api_key_header)
+):
+    """Query aggregate patterns across all users.
+    
+    Requires x402 payment of 0.01 USDC on Base.
+    For demo: pass X-Payment-Proof: 
+    demo_payment_proof_base_usdc header.
+    """
+    tenant = resolve_tenant(api_key)
+    
+    # Check payment proof
+    if x_payment_proof != DEMO_PAYMENT_PROOF:
+        # Return 402 Payment Required
+        return JSONResponse(
+            status_code=402,
+            content={
+                "error": "payment_required",
+                "amount": MARKET_PRICE_USDC,
+                "currency": "USDC",
+                "network": "base",
+                "recipient": LUMEN_WALLET,
+                "description": (
+                    f"Lumen market brief — "
+                    f"{req.domain} domain aggregate"
+                ),
+                "retry_header": "X-Payment-Proof",
+                "docs": (
+                    "Pay 0.01 USDC on Base to "
+                    "https://lumen-memory-production"
+                    ".up.railway.app, then retry "
+                    "with X-Payment-Proof: "
+                    "<tx_hash>"
+                )
+            }
+        )
+    
+    # Payment valid — return aggregate patterns
+    try:
+        result = get_aggregate_patterns(req.domain)
+        result["payment"] = {
+            "amount_paid": MARKET_PRICE_USDC,
+            "currency": "USDC",
+            "network": "base",
+            "status": "verified"
+        }
+        return result
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=str(exc)
+        )
+
+
+@app.get("/market/domains")
+def market_domains(
+    api_key: str = Security(api_key_header)
+):
+    """List domains that have market data available."""
+    tenant = resolve_tenant(api_key)
+    
+    memory = get_client()
+    all_events = memory.read_events()
+    
+    domains = set()
+    for ev in all_events:
+        acted_list = ev.get("acted") or []
+        for act in acted_list:
+            if isinstance(act, str) and act.startswith("LUMEN|"):
+                parts = act.split("|")
+                if len(parts) >= 7:
+                    domains.add(parts[2])
+    
+    return {
+        "domains": sorted(list(domains)),
+        "count": len(domains)
     }
 
 

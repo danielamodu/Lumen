@@ -266,3 +266,44 @@ class Lumen:
                 detail = response.text
             raise LumenAPIError(response.status_code, detail)
         return response.json()
+
+    def market_brief(
+        self,
+        domain: str,
+        context: str = "",
+        payment_proof: str = "demo_payment_proof_base_usdc"
+    ) -> dict:
+        """Query aggregate patterns across all users.
+        
+        Requires payment proof. For demo use the default
+        demo_payment_proof_base_usdc value.
+        
+        In production, pay 0.01 USDC on Base and pass
+        the transaction hash as payment_proof.
+        
+        Args:
+            domain: Domain to query aggregate patterns for.
+            context: Optional context about your use case.
+            payment_proof: Payment proof header value.
+            
+        Returns:
+            Aggregate pattern dict with win rates,
+            top actions, sample size, contributors.
+        """
+        # Temporarily add payment proof header
+        self.session.headers["X-Payment-Proof"] = payment_proof
+        try:
+            result = self._post("/market/brief", {
+                "domain": domain,
+                "context": context
+            })
+        finally:
+            # Remove after request
+            self.session.headers.pop(
+                "X-Payment-Proof", None
+            )
+        return result
+
+    def market_domains(self) -> dict:
+        """List domains with market data available."""
+        return self._get("/market/domains")
