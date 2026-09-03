@@ -22,7 +22,7 @@ class Lumen:
     
     def __init__(
         self, 
-        base_url: str = "https://lumen-memory.fly.dev",
+        base_url: str = "https://lumen-memory-production.up.railway.app",
         api_key: str = "lmn_demo0000000000000000000000000000",
         timeout: int = 10
     ):

@@ -8,7 +8,8 @@ from lumen_memory.exceptions import (
     LumenConnectionError
 )
 
-API_URL = "http://localhost:8000"
+import os
+API_URL = os.environ.get("LUMEN_API_URL", "https://lumen-memory-production.up.railway.app")
 DEMO_KEY = "lmn_demo0000000000000000000000000000"
 ADMIN_KEY = "lmn_admin000000000000000000000000000"
 
