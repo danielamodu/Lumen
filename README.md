@@ -130,6 +130,28 @@ The pattern learning works identically regardless of domain.
 
 ---
 
+## Live API
+
+The Lumen API is live at:
+https://lumen-memory.fly.dev
+
+```python
+# Use immediately — no setup required
+from lumen_memory import Lumen
+lumen = Lumen()  # connects to live API by default
+```
+
+Or hit the API directly:
+```bash
+curl -X POST https://lumen-memory.fly.dev/brief \
+  -H "Content-Type: application/json" \
+  -H "X-Lumen-Key: lmn_demo0000000000000000000000000000" \
+  -d '{"user_id":"you","domain":"pitch",
+       "context":"about to pitch"}'
+```
+
+---
+
 ### Quickstart
 
 ```bash
