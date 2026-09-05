@@ -236,3 +236,35 @@ Response:
 ```
 
 The x402 payment standard means any agent can participate in this market autonomously — no human required to approve the transaction.
+
+---
+
+## Virtuals Protocol Integration
+
+Lumen is available as a G.A.M.E function set for any 
+Virtuals Protocol agent.
+
+```bash
+pip install game-sdk lumen-memory
+```
+
+```python
+from game_sdk.game.worker import Worker
+from virtuals.lumen_functions import LUMEN_GAME_FUNCTIONS
+
+worker = Worker(
+    api_key=GAME_API_KEY,
+    description="An agent with persistent outcome memory.",
+    action_space=LUMEN_GAME_FUNCTIONS
+)
+```
+
+Any G.A.M.E agent with LUMEN_GAME_FUNCTIONS in its 
+action space can:
+- Call get_lumen_brief before acting
+- Call record_lumen_outcome after acting
+- Get cross-domain insights from shared Sibyl memory
+- Get smarter with every session
+
+Lumen Scout — a demo G.A.M.E agent powered by Lumen 
+memory — is in virtuals/lumen_scout.py.
