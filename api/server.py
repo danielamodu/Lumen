@@ -397,7 +397,7 @@ def market_brief(
     
     Option 1 — Real payment:
     1. Send 0.01 USDC on Base mainnet to:
-       0xf827fffabd004e81fdf0531b7ced3772452e52f0
+       0xf821447c6bd7c54e5fc2bd92239f4d8ed73c52f0
     2. Pass transaction hash as:
        X-Payment-Proof: 0x<tx_hash>
     

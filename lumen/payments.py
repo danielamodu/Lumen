@@ -14,7 +14,7 @@ BASE_RPC_URL = "https://mainnet.base.org"
 USDC_CONTRACT = "0x83363266e35bc7cc0509e06cc9b69da3ad762913"
 
 # Recipient wallet (Base mainnet USDC)
-RECIPIENT = "0xf827fffabd004e81fdf0531b7ced3772452e52f0"
+RECIPIENT = "0xf821447c6bd7c54e5fc2bd92239f4d8ed73c52f0"
 
 # Minimum payment: 0.01 USDC = 10000 units (6 decimals)
 MIN_AMOUNT_UNITS = 10000

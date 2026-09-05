@@ -22,7 +22,7 @@ Lumen directly serves the solo builder — early-stage founders, technical freel
 
 ### Base Integration
 
-Lumen implements real onchain USDC payment verification on Base mainnet (chain ID 8453). The /market/brief endpoint returns HTTP 402 with payment details when called without proof. Agents send 0.01 USDC to 0xf827fffabd004e81fdf0531b7ced3772452e52f0 on Base mainnet, pass the transaction hash as X-Payment-Proof, and the server verifies onchain via the Base RPC:
+Lumen implements real onchain USDC payment verification on Base mainnet (chain ID 8453). The /market/brief endpoint returns HTTP 402 with payment details when called without proof. Agents send 0.01 USDC to 0xf821447c6bd7c54e5fc2bd92239f4d8ed73c52f0 on Base mainnet, pass the transaction hash as X-Payment-Proof, and the server verifies onchain via the Base RPC:
 
 1. Transaction exists and is confirmed
 2. Contains a USDC Transfer event to our wallet
