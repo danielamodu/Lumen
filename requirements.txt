@@ -4,3 +4,4 @@ fastapi
 uvicorn[standard]
 pydantic
 requests
+web3==6.20.0

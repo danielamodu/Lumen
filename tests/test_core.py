@@ -173,7 +173,7 @@ def test_market_brief_requires_payment():
         data = response.json()
         assert data["error"] == "payment_required"
         assert data["currency"] == "USDC"
-        assert data["network"] == "base"
+        assert data["network"] in ("base", "base_mainnet")
     except Exception:
         # Fallback to TestClient
         from fastapi.testclient import TestClient
@@ -191,7 +191,7 @@ def test_market_brief_requires_payment():
         data = response.json()
         assert data["error"] == "payment_required"
         assert data["currency"] == "USDC"
-        assert data["network"] == "base"
+        assert data["network"] in ("base", "base_mainnet")
 
 
 

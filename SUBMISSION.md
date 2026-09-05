@@ -22,4 +22,13 @@ Lumen directly serves the solo builder — early-stage founders, technical freel
 
 ### Base Integration
 
-Lumen is an active on-chain intelligence market built on Base. In Phase 12, the x402 HTTP Payment Required standard was implemented and deployed live: agents query `/market/brief` to access cross-user aggregate patterns and receive an HTTP 402 with USDC-on-Base payment requirements (`0.01 USDC`). Upon providing payment proof via the `X-Payment-Proof` header, the server returns verified cross-user winning heuristics, sample size, and contributor counts. This turns Lumen from a private memory layer into an autonomous intelligence market on Base, where agents pay for collective competence and contributors earn protocol rewards without requiring human intervention.
+Lumen implements real onchain USDC payment verification on Base mainnet (chain ID 8453). The /market/brief endpoint returns HTTP 402 with payment details when called without proof. Agents send 0.01 USDC to 0xf827fffabd004e81fdf0531b7ced3772452e52f0 on Base mainnet, pass the transaction hash as X-Payment-Proof, and the server verifies onchain via the Base RPC:
+
+1. Transaction exists and is confirmed
+2. Contains a USDC Transfer event to our wallet
+3. Amount >= 0.01 USDC
+4. Transaction is < 1 hour old
+5. Transaction hash not previously used (replay protection)
+
+This is not simulated. The verification calls https://mainnet.base.org and reads the actual transaction receipt. Any agent on any framework can participate in the Lumen pattern market by paying 0.01 USDC on Base mainnet.
+

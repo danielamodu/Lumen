@@ -3,6 +3,7 @@
 import glob
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -22,10 +23,10 @@ from lumen.webhooks import (
     list_webhooks, check_and_fire_webhooks
 )
 from lumen.market import get_aggregate_patterns
+from lumen.payments import verify_usdc_payment, RECIPIENT, MIN_AMOUNT_UNITS
 from demo.seed import seed_outcomes
 
 DEMO_PAYMENT_PROOF = "demo_payment_proof_base_usdc"
-LUMEN_WALLET = "0x0000000000000000000000000000000000000000"
 MARKET_PRICE_USDC = "0.01"
 from api.auth import (
     resolve_tenant,
@@ -112,6 +113,15 @@ class DemoStepRequest(BaseModel):
 
 class CreateTenantRequest(BaseModel):
     name: str
+
+
+class MemoryEventsRequest(BaseModel):
+    user_id: Optional[str] = None
+    domain: Optional[str] = None
+
+
+class MemoryPatternsRequest(BaseModel):
+    user_id: Optional[str] = None
 
 
 def _wipe_internal():
@@ -383,47 +393,95 @@ def market_brief(
 ):
     """Query aggregate patterns across all users.
     
-    Requires x402 payment of 0.01 USDC on Base.
-    For demo: pass X-Payment-Proof: 
-    demo_payment_proof_base_usdc header.
+    Requires 0.01 USDC payment on Base mainnet.
+    
+    Option 1 — Real payment:
+    1. Send 0.01 USDC on Base mainnet to:
+       0xf827fffabd004e81fdf0531b7ced3772452e52f0
+    2. Pass transaction hash as:
+       X-Payment-Proof: 0x<tx_hash>
+    
+    Option 2 — Demo mode:
+    Pass X-Payment-Proof: demo_payment_proof_base_usdc
     """
     tenant = resolve_tenant(api_key)
     
-    # Check payment proof
-    if x_payment_proof != DEMO_PAYMENT_PROOF:
-        # Return 402 Payment Required
+    # No payment proof at all
+    if not x_payment_proof:
+        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=402,
             content={
                 "error": "payment_required",
                 "amount": MARKET_PRICE_USDC,
                 "currency": "USDC",
-                "network": "base",
-                "recipient": LUMEN_WALLET,
+                "network": "base_mainnet",
+                "chain_id": 8453,
+                "recipient": RECIPIENT,
+                "usdc_contract": 
+                    "0x83363266e35bc7cc0509e06cc9b69da3ad762913",
                 "description": (
                     f"Lumen market brief — "
                     f"{req.domain} domain aggregate"
                 ),
-                "retry_header": "X-Payment-Proof",
-                "docs": (
-                    "Pay 0.01 USDC on Base to "
-                    "https://lumen-memory-production"
-                    ".up.railway.app, then retry "
-                    "with X-Payment-Proof: "
-                    "<tx_hash>"
+                "instructions": [
+                    "1. Send 0.01 USDC on Base mainnet "
+                    f"to {RECIPIENT}",
+                    "2. Retry with header: "
+                    "X-Payment-Proof: <tx_hash>"
+                ],
+                "demo_mode": (
+                    "For demo: use "
+                    "X-Payment-Proof: "
+                    "demo_payment_proof_base_usdc"
                 )
             }
         )
     
-    # Payment valid — return aggregate patterns
-    try:
-        result = get_aggregate_patterns(req.domain)
-        result["payment"] = {
+    # Demo payment proof
+    if x_payment_proof == DEMO_PAYMENT_PROOF:
+        payment_info = {
             "amount_paid": MARKET_PRICE_USDC,
             "currency": "USDC",
-            "network": "base",
-            "status": "verified"
+            "network": "base_mainnet",
+            "status": "demo_verified",
+            "note": "Demo mode — no real payment required"
         }
+    else:
+        # Real onchain verification
+        verification = verify_usdc_payment(x_payment_proof)
+        
+        if not verification["valid"]:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=402,
+                content={
+                    "error": "payment_invalid",
+                    "reason": verification["reason"],
+                    "recipient": RECIPIENT,
+                    "amount_required": MARKET_PRICE_USDC,
+                    "currency": "USDC",
+                    "network": "base_mainnet"
+                }
+            )
+        
+        payment_info = {
+            "amount_paid": str(verification["amount_usdc"]),
+            "currency": "USDC",
+            "network": "base_mainnet",
+            "chain_id": 8453,
+            "tx_hash": x_payment_proof,
+            "from_address": verification["from_address"],
+            "status": "verified_onchain",
+            "verified_at": datetime.now(
+                timezone.utc
+            ).isoformat()
+        }
+    
+    # Return aggregate patterns
+    try:
+        result = get_aggregate_patterns(req.domain)
+        result["payment"] = payment_info
         return result
     except Exception as exc:
         raise HTTPException(
@@ -453,6 +511,149 @@ def market_domains(
     return {
         "domains": sorted(list(domains)),
         "count": len(domains)
+    }
+
+
+@app.post("/memory/events")
+def get_memory_events(
+    req: MemoryEventsRequest,
+    api_key: str = Security(api_key_header)
+):
+    """Return parsed COLD journal entries."""
+    tenant = resolve_tenant(api_key)
+    memory = get_client()
+    all_events = memory.read_events()
+    
+    parsed = []
+    for ev in all_events:
+        acted_list = ev.get("acted") or []
+        for act in acted_list:
+            if not isinstance(act, str):
+                continue
+            if not act.startswith("LUMEN|"):
+                continue
+            parts = act.split("|")
+            if len(parts) < 7 or parts[5] != "SEP":
+                continue
+            
+            try:
+                sig = int(parts[3])
+            except ValueError:
+                continue
+            
+            entry = {
+                "user_id": parts[1],
+                "domain": parts[2],
+                "signal": sig,
+                "action": parts[4],
+                "outcome": parts[6],
+                "raw": act
+            }
+            
+            # Filter by user_id if provided
+            if req.user_id:
+                scoped = scope_user_id(
+                    tenant["tenant_id"], req.user_id
+                )
+                if entry["user_id"] != scoped:
+                    continue
+            
+            # Filter by domain if provided
+            if req.domain:
+                if entry["domain"] != req.domain.lower():
+                    continue
+            
+            parsed.append(entry)
+    
+    # Most recent first
+    parsed.reverse()
+    
+    return {
+        "events": parsed,
+        "count": len(parsed)
+    }
+
+
+@app.post("/memory/patterns")
+def get_memory_patterns(
+    req: MemoryPatternsRequest,
+    api_key: str = Security(api_key_header)
+):
+    """Return WARM pattern entities."""
+    tenant = resolve_tenant(api_key)
+    memory = get_client()
+    
+    domains = ["pitch", "post", "ask"]
+    patterns = []
+    
+    # Get scoped user_id if provided
+    user_ids_to_check = []
+    if req.user_id:
+        scoped = scope_user_id(
+            tenant["tenant_id"], req.user_id
+        )
+        user_ids_to_check = [scoped]
+    else:
+        # Get all users from events
+        all_events = memory.read_events()
+        seen_users = set()
+        for ev in all_events:
+            acted_list = ev.get("acted") or []
+            for act in acted_list:
+                if isinstance(act, str) and \
+                        act.startswith("LUMEN|"):
+                    parts = act.split("|")
+                    if len(parts) >= 7:
+                        seen_users.add(parts[1])
+        user_ids_to_check = list(seen_users)
+    
+    from lumen.core import _safe_get_entity
+    
+    for user_id in user_ids_to_check:
+        # Get all domains for this user
+        user_entity = _safe_get_entity(
+            memory, "user", user_id
+        )
+        if not user_entity:
+            continue
+        user_domains = user_entity.get(
+            "body", {}
+        ).get("domains", domains)
+        
+        for domain in user_domains:
+            pattern_entity = _safe_get_entity(
+                memory, "pattern", 
+                f"{user_id}:{domain}"
+            )
+            if not pattern_entity:
+                continue
+            body = pattern_entity.get("body", {})
+            if not body:
+                continue
+            
+            patterns.append({
+                "user_id": user_id,
+                "domain": domain,
+                "win_rate": body.get("win_rate", 0.0),
+                "loss_rate": body.get("loss_rate", 0.0),
+                "avg_signal": body.get("avg_signal", 0.0),
+                "recent_wins": body.get(
+                    "recent_wins", []
+                ),
+                "recent_losses": body.get(
+                    "recent_losses", []
+                ),
+                "total_outcomes": body.get(
+                    "total_outcomes", 0
+                ),
+                "last_calculated": body.get(
+                    "last_calculated", ""
+                )
+            })
+    
+    return {
+        "patterns": patterns,
+        "count": len(patterns)
     }
 
 

@@ -275,30 +275,28 @@ class Lumen:
     ) -> dict:
         """Query aggregate patterns across all users.
         
-        Requires payment proof. For demo use the default
-        demo_payment_proof_base_usdc value.
+        For real payment:
+        1. Send 0.01 USDC on Base mainnet to:
+           0xf827fffabd004e81fdf0531b7ced3772452e52f0
+        2. Pass the tx hash as payment_proof
         
-        In production, pay 0.01 USDC on Base and pass
-        the transaction hash as payment_proof.
+        For demo:
+        Use default payment_proof value.
         
         Args:
-            domain: Domain to query aggregate patterns for.
-            context: Optional context about your use case.
-            payment_proof: Payment proof header value.
-            
-        Returns:
-            Aggregate pattern dict with win rates,
-            top actions, sample size, contributors.
+            domain: Domain to query.
+            context: Optional context.
+            payment_proof: Tx hash or demo proof string.
         """
-        # Temporarily add payment proof header
-        self.session.headers["X-Payment-Proof"] = payment_proof
+        self.session.headers["X-Payment-Proof"] = (
+            payment_proof
+        )
         try:
             result = self._post("/market/brief", {
                 "domain": domain,
                 "context": context
             })
         finally:
-            # Remove after request
             self.session.headers.pop(
                 "X-Payment-Proof", None
             )
