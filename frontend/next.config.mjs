@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  generateBuildId: async () => String(Date.now()),
 };
 
 export default nextConfig;

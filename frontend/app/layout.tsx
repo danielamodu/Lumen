@@ -1,28 +1,13 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  weight: ["300", "400", "500", "600", "700", "800"],
-});
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["400", "500", "600", "700"],
-});
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Lumen — Outcome Memory Layer for AI Agents",
-  description: "Deterministic empirical memory substrate that makes stateless AI agents compound competence with every interaction.",
+  title: "Lumen — Architectural Memory for Agents",
+  description:
+    "The outcome memory layer that makes any agent learn from experience. Not fine-tuning. Not RAG. Just memory.",
 };
 
 export default function RootLayout({
@@ -31,11 +16,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${jakarta.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} dark`}
-    >
-      <body className="min-h-screen bg-[#06080c] text-[#f1f5f9] font-sans antialiased selection:bg-indigo-500/30 selection:text-indigo-200">
+    <html lang="en" className="dark">
+      <body className="min-h-screen bg-[#0C0A09] text-[#E7E5E4] font-sans antialiased selection:bg-lime-400/20 selection:text-lime-300">
+        <Script
+          src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"
+          strategy="beforeInteractive"
+        />
         {children}
       </body>
     </html>
