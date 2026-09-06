@@ -68,6 +68,7 @@ const TIMELINE_STEPS = [
 ];
 
 export default function LiveConsolePage() {
+  console.log("--> [SSR] RENDERING LIVE CONSOLE PAGE [/app]");
   // Domain briefs
   const [pitchBrief, setPitchBrief] = useState<BriefData>({
     raw_outcomes: 0,

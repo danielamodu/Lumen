@@ -29,6 +29,7 @@ const MARKET_CODE = [
 ];
 
 export default function LandingPage() {
+  console.log("--> [SSR] RENDERING LANDING PAGE [/]");
   const [heroText, setHeroText] = useState("");
   const [marketText, setMarketText] = useState("");
 
