@@ -51,8 +51,20 @@ out/
 
 # Environment & credentials
 .env
-.env*.local
+.env.*
 *.env
+!.env.example
+*.pem
+*.key
+*.pkcs12
+*.pfx
+*.cert
+*.crt
+*credentials*.json
+*secret*.json
+tenants.json
+used_txs.json
+webhooks.json
 
 # Operating System
 .DS_Store

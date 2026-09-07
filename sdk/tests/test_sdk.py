@@ -11,7 +11,6 @@ from lumen_memory.exceptions import (
 import os
 API_URL = os.environ.get("LUMEN_API_URL", "https://lumen-memory-production.up.railway.app")
 DEMO_KEY = "lmn_demo0000000000000000000000000000"
-ADMIN_KEY = "lmn_admin000000000000000000000000000"
 
 
 def server_is_running():
@@ -74,12 +73,21 @@ def test_sdk_custom_domain():
 
 @requires_server
 def test_isolation_between_tenants():
-    """Two tenants cannot see each other's data."""
+    """Two tenants cannot see each other's data.
+
+    Provisions a real second tenant via /tenants/create (requires the
+    admin key to be configured server-side via LUMEN_ADMIN_KEY). Skips
+    cleanly if no admin key is available in the environment.
+    """
+    admin_key = os.environ.get("LUMEN_ADMIN_KEY")
+    if not admin_key:
+        pytest.skip(
+            "LUMEN_ADMIN_KEY not set — cannot provision a second "
+            "tenant to test isolation."
+        )
+
     # Tenant 1 uses demo key
-    lumen1 = Lumen(
-        base_url=API_URL,
-        api_key=DEMO_KEY
-    )
+    lumen1 = Lumen(base_url=API_URL, api_key=DEMO_KEY)
     lumen1.wipe()
     lumen1.record("alex", "pitch",
                   "led with problem", "got meeting", 1)
@@ -87,24 +95,32 @@ def test_isolation_between_tenants():
                   "led with problem", "got follow-up", 1)
     lumen1.record("alex", "pitch",
                   "led with features", "ghosted", -1)
-    
+
     brief1 = lumen1.brief("alex", "pitch", "test")
     assert brief1.raw_outcomes == 3
 
-    # Tenant 2 creates fresh connection 
-    # Uses a different user_id scoping by using admin key
-    lumen2 = Lumen(
-        base_url=API_URL,
-        api_key=ADMIN_KEY
+    # Mint a genuinely separate tenant with the admin key.
+    create_res = requests.post(
+        f"{API_URL}/tenants/create",
+        json={"name": "isolation-test"},
+        headers={"X-Lumen-Key": admin_key},
+        timeout=10,
     )
-    
-    # Admin tenant sees alex with 0 outcomes 
-    # because admin:alex != demo:alex
+    assert create_res.status_code == 200, (
+        f"Could not create second tenant: "
+        f"{create_res.status_code} {create_res.text}"
+    )
+    tenant2_key = create_res.json()["api_key"]
+
+    lumen2 = Lumen(base_url=API_URL, api_key=tenant2_key)
+
+    # The new tenant shares the same user_id "alex" but is scoped to a
+    # different tenant_id, so it must see zero of tenant 1's outcomes.
     brief2 = lumen2.brief("alex", "pitch", "test")
     assert brief2.raw_outcomes == 0, (
         f"Tenant isolation failed. "
-        f"Admin tenant saw {brief2.raw_outcomes} outcomes "
-        f"that belong to demo tenant."
+        f"Second tenant saw {brief2.raw_outcomes} outcomes "
+        f"that belong to the demo tenant."
     )
 
 

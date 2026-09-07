@@ -29,6 +29,9 @@ def _save_webhooks(webhooks: dict) -> None:
         json.dump(webhooks, f, indent=2)
 
 
+from api.security import validate_callback_url, sign_webhook_payload
+
+
 def register_webhook(
     tenant_id: str,
     user_id: str,
@@ -36,17 +39,20 @@ def register_webhook(
     callback_url: str,
     threshold: float = 0.10
 ) -> dict:
-    """Register a webhook for pattern shift notifications.
+    """Register a webhook for pattern shift notifications with SSRF validation.
     
     Returns the webhook record including its ID.
     """
+    # SSRF Protection: validate URL scheme and block private/loopback/cloud metadata IPs
+    validated_url = validate_callback_url(callback_url)
+    
     webhook_id = "wh_" + secrets.token_hex(8)
     webhook = {
         "id": webhook_id,
         "tenant_id": tenant_id,
         "user_id": user_id,
         "domain": domain,
-        "callback_url": callback_url,
+        "callback_url": validated_url,
         "threshold": threshold,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "active": True,
@@ -69,7 +75,7 @@ def delete_webhook(webhook_id: str, tenant_id: str) -> bool:
     if webhook_id not in webhooks:
         return False
     
-    # Ensure tenant owns this webhook
+    # Ensure tenant owns this webhook (Row-level access lock)
     if webhooks[webhook_id].get("tenant_id") != tenant_id:
         return False
     
@@ -80,7 +86,7 @@ def delete_webhook(webhook_id: str, tenant_id: str) -> bool:
 
 def list_webhooks(tenant_id: str, user_id: str = None,
                   domain: str = None) -> list:
-    """List webhooks for a tenant, optionally filtered."""
+    """List webhooks for a tenant, strictly isolated to tenant."""
     webhooks = _load_webhooks()
     result = []
     
@@ -171,8 +177,7 @@ def check_and_fire_webhooks(
             "current_brief": current_brief
         }
         
-        # Fire in background thread — don't block the 
-        # record() call
+        # Fire in background thread — don't block the record() call
         thread = threading.Thread(
             target=_fire_webhook,
             args=(webhook_id, wh["callback_url"], payload),
@@ -194,20 +199,23 @@ def check_and_fire_webhooks(
 def _fire_webhook(webhook_id: str, 
                   callback_url: str, 
                   payload: dict) -> None:
-    """Fire a single webhook. Runs in background thread."""
+    """Fire a single webhook with HMAC-SHA256 signature. Runs in background thread."""
     try:
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        signature = sign_webhook_payload(payload_bytes)
         response = requests.post(
             callback_url,
-            json=payload,
+            data=payload_bytes,
             timeout=10,
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": "lumen-webhooks/0.1.0",
-                "X-Lumen-Event": "pattern_shift"
+                "X-Lumen-Event": "pattern_shift",
+                "X-Lumen-Signature": signature
             }
         )
         response.raise_for_status()
     except Exception as exc:
-        # Log but don't crash — webhook failures are 
-        # non-fatal
-        print(f"Webhook {webhook_id} failed: {exc}")
+        # Non-fatal: log without leaking credentials
+        print(f"Webhook {webhook_id} delivery error: {type(exc).__name__}")
+

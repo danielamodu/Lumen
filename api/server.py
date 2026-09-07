@@ -10,10 +10,10 @@ from typing import Optional
 # Ensure repository root is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import FastAPI, HTTPException, Security, Header
+from fastapi import FastAPI, HTTPException, Security, Header, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 import uvicorn
 
 from lumen.core import record, brief
@@ -37,8 +37,18 @@ from api.auth import (
     ADMIN_KEY,
     api_key_header,
 )
+from api.security import (
+    LumenSecurityMiddleware,
+    sanitize_text,
+    validate_domain_name,
+    validate_user_identifier,
+    validate_callback_url,
+)
 
 app = FastAPI(title="Lumen API", description="Outcome memory layer for AI agents")
+
+# Register security middleware (enforces security headers, rate limiting, bot defenses, HTTPS)
+app.add_middleware(LumenSecurityMiddleware)
 
 # CORS: browsers reject allow_origins=["*"] together with
 # allow_credentials=True, so keep them consistent. Auth is via the
@@ -56,84 +66,154 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
-class BriefRequest(BaseModel):
-    user_id: str = "alex"
-    domain: str = "pitch"
-    context: str = ""
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to trim internal stack traces and prevent info disclosure."""
+    import logging
+    logging.getLogger("lumen.api").error(f"Internal error on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_error", "detail": "An unexpected error occurred."}
+    )
+
+
+class StrictModel(BaseModel):
+    """Base model with strict field enforcement preventing field tampering and parameter pollution."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class BriefRequest(StrictModel):
+    user_id: str = Field(default="alex", max_length=64)
+    domain: str = Field(default="pitch", max_length=64)
+    context: str = Field(default="", max_length=1000)
 
     @field_validator("domain")
     @classmethod
-    def normalize_domain(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Domain must be a non-empty string.")
-        return v.strip().lower()
+    def validate_domain(cls, v):
+        return validate_domain_name(v)
 
-
-class RecordRequest(BaseModel):
-    user_id: str
-    domain: str
-    action: str
-    outcome: str
-    signal: int
-
-
-class WebhookCreateRequest(BaseModel):
-    user_id: str
-    domain: str
-    callback_url: str
-    threshold: float = 0.10
-
-    @field_validator("threshold")
+    @field_validator("user_id")
     @classmethod
-    def validate_threshold(cls, v):
-        if not 0.01 <= v <= 1.0:
-            raise ValueError(
-                "Threshold must be between 0.01 and 1.0"
-            )
-        return v
+    def validate_user(cls, v):
+        return validate_user_identifier(v)
+
+    @field_validator("context")
+    @classmethod
+    def sanitize_ctx(cls, v):
+        return sanitize_text(v, max_length=1000)
+
+
+class RecordRequest(StrictModel):
+    user_id: str = Field(..., max_length=64)
+    domain: str = Field(..., max_length=64)
+    action: str = Field(..., max_length=500)
+    outcome: str = Field(..., max_length=500)
+    signal: int = Field(..., ge=-1, le=1)
 
     @field_validator("domain")
     @classmethod
-    def normalize_domain(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Domain must be a non-empty string.")
-        return v.strip().lower()
+    def validate_domain(cls, v):
+        return validate_domain_name(v)
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user(cls, v):
+        return validate_user_identifier(v)
+
+    @field_validator("action")
+    @classmethod
+    def sanitize_act(cls, v):
+        return sanitize_text(v, max_length=500)
+
+    @field_validator("outcome")
+    @classmethod
+    def sanitize_out(cls, v):
+        return sanitize_text(v, max_length=500)
 
 
-class MarketBriefRequest(BaseModel):
-    domain: str
-    context: str = ""
+class WebhookCreateRequest(StrictModel):
+    user_id: str = Field(..., max_length=64)
+    domain: str = Field(..., max_length=64)
+    callback_url: str = Field(..., max_length=500)
+    threshold: float = Field(default=0.10, ge=0.01, le=1.0)
 
     @field_validator("domain")
     @classmethod
-    def normalize_domain(cls, v):
-        if not v or not v.strip():
-            raise ValueError(
-                "Domain must be a non-empty string."
-            )
-        return v.strip().lower()
+    def validate_domain(cls, v):
+        return validate_domain_name(v)
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user(cls, v):
+        return validate_user_identifier(v)
+
+    @field_validator("callback_url")
+    @classmethod
+    def validate_url(cls, v):
+        return validate_callback_url(v)
 
 
-class DemoStepRequest(BaseModel):
+class MarketBriefRequest(StrictModel):
+    domain: str = Field(..., max_length=64)
+    context: str = Field(default="", max_length=1000)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, v):
+        return validate_domain_name(v)
+
+    @field_validator("context")
+    @classmethod
+    def sanitize_ctx(cls, v):
+        return sanitize_text(v, max_length=1000)
+
+
+class DemoStepRequest(StrictModel):
     step: int = Field(..., ge=1, le=5)
 
 
-class CreateTenantRequest(BaseModel):
-    name: str
+class CreateTenantRequest(StrictModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def sanitize_name(cls, v):
+        return sanitize_text(v, max_length=100)
 
 
-class MemoryEventsRequest(BaseModel):
-    user_id: Optional[str] = None
-    domain: Optional[str] = None
+class MemoryEventsRequest(StrictModel):
+    user_id: Optional[str] = Field(default=None, max_length=64)
+    domain: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, v):
+        if v:
+            return validate_domain_name(v)
+        return v
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user(cls, v):
+        if v:
+            return validate_user_identifier(v)
+        return v
 
 
-class MemoryPatternsRequest(BaseModel):
-    user_id: Optional[str] = None
+class MemoryPatternsRequest(StrictModel):
+    user_id: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user(cls, v):
+        if v:
+            return validate_user_identifier(v)
+        return v
 
 
 def _wipe_internal():
@@ -166,8 +246,8 @@ def get_brief(
     try:
         res = brief(scoped_user, req.domain, req.context)
         return res
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to retrieve briefing.")
 
 
 @app.post("/record")
@@ -190,8 +270,8 @@ def record_outcome(
         return {"status": "ok", "message": "Outcome recorded."}
     except ValueError as val_err:
         raise HTTPException(status_code=400, detail=str(val_err))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to record outcome.")
 
 
 @app.post("/webhooks")
@@ -262,8 +342,8 @@ def wipe_memory(api_key: str = Security(api_key_header)):
     try:
         _wipe_internal()
         return {"status": "ok", "message": "Memory wiped."}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to wipe memory.")
 
 
 @app.post("/seed")
@@ -280,8 +360,8 @@ def seed_memory(api_key: str = Security(api_key_header)):
         scoped_user = scope_user_id(tenant["tenant_id"], "alex")
         seed_outcomes(scoped_user)
         return {"status": "ok", "message": "Memory seeded."}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to seed memory.")
 
 
 @app.post("/demo/step")
@@ -357,8 +437,8 @@ def run_demo_step(
             "action_taken": action_taken,
             "brief": brief_dict,
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to execute demo step.")
 
 
 @app.post("/tenants/create")
@@ -460,11 +540,25 @@ def market_brief(
             "note": "Demo mode — no real payment required"
         }
     else:
+        # Validate format before RPC lookup
+        from api.security import TX_HASH_REGEX
+        if not TX_HASH_REGEX.match(x_payment_proof):
+            return JSONResponse(
+                status_code=402,
+                content={
+                    "error": "payment_invalid",
+                    "reason": "Invalid transaction hash format. Expected 64 hex characters prefixed with 0x.",
+                    "recipient": RECIPIENT,
+                    "amount_required": MARKET_PRICE_USDC,
+                    "currency": "USDC",
+                    "network": "base_mainnet"
+                }
+            )
+
         # Real onchain verification
         verification = verify_usdc_payment(x_payment_proof)
         
         if not verification["valid"]:
-            from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=402,
                 content={
@@ -495,9 +589,9 @@ def market_brief(
         result = get_aggregate_patterns(req.domain)
         result["payment"] = payment_info
         return result
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
-            status_code=500, detail=str(exc)
+            status_code=500, detail="Failed to query market patterns."
         )
 
 

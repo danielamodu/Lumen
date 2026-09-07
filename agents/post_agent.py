@@ -99,7 +99,17 @@ Be specific. Be direct. Apply the memory insights above.
     if not action:
         action = "opened with a counterintuitive question about agent memory degradation"
 
-    outcome = "high engagement thread with 50+ replies"
+    # Capture the real outcome from the user. Never fabricate it — the
+    # journal is the source of truth the whole product learns from, so a
+    # made-up "win" outcome on a loss would poison every future brief.
+    print("One sentence on what happened (the outcome):")
+    outcome = input("> ").strip()
+    if not outcome:
+        outcome = {
+            1: "post performed well",
+            0: "neutral / mixed response",
+            -1: "post underperformed",
+        }[signal]
 
     # 7. Record outcome
     record(user_id, domain, action, outcome, signal)

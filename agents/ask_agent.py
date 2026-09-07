@@ -101,7 +101,17 @@ Be specific. Be direct. Apply the memory insights above.
     if not action:
         action = "gave full context and cited their research before requesting feedback"
 
-    outcome = "got a positive response and scheduled review call"
+    # Capture the real outcome from the user. Never fabricate it — the
+    # journal is the source of truth the whole product learns from, so a
+    # made-up "win" outcome on a loss would poison every future brief.
+    print("One sentence on what happened (the outcome):")
+    outcome = input("> ").strip()
+    if not outcome:
+        outcome = {
+            1: "got a positive response",
+            0: "neutral / no clear response",
+            -1: "no response or declined",
+        }[signal]
 
     # 7. Record outcome
     record(user_id, domain, action, outcome, signal)
