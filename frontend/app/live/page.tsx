@@ -1238,13 +1238,31 @@ export default function LiveConsolePage() {
               <span className="text-[10px] uppercase tracking-[.25em] text-white/25">Infrastructure</span>
               <div className="mt-4 space-y-3 text-sm text-white/50">
                 <a
-                  href="https://github.com/Sibyl-Labs/lumen"
+                  href="https://github.com/danielamodu/Lumen"
                   target="_blank"
                   rel="noopener noreferrer"
                   id="footer-gh-link"
                   className="flex items-center gap-2 hover:text-lime-300 transition-colors"
                 >
                   <iconify-icon icon="mdi:github" /> GitHub
+                </a>
+                <a
+                  href="https://x.com/szrxbt"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="footer-x-link"
+                  className="flex items-center gap-2 hover:text-lime-300 transition-colors"
+                >
+                  <iconify-icon icon="simple-icons:x" /> X
+                </a>
+                <a
+                  href="https://www.linkedin.com/in/daniel-amodu-07306b433/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="footer-linkedin-link"
+                  className="flex items-center gap-2 hover:text-lime-300 transition-colors"
+                >
+                  <iconify-icon icon="mdi:linkedin" /> LinkedIn
                 </a>
                 <span className="flex items-center gap-2">
                   <iconify-icon icon="lucide:cpu" /> Powered by Sibyl Memory

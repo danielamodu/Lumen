@@ -215,7 +215,7 @@ export default function LandingPage() {
                   Watch the Demo <iconify-icon icon="lucide:arrow-up-right" />
                 </Link>
                 <a
-                  href="https://github.com/Sibyl-Labs/lumen"
+                  href="https://github.com/danielamodu/Lumen"
                   target="_blank"
                   rel="noopener noreferrer"
                   id="hero-gh-btn"
@@ -223,28 +223,6 @@ export default function LandingPage() {
                 >
                   View on GitHub <iconify-icon icon="mdi:github" />
                 </a>
-              </div>
-              <div className="mt-10 flex items-center gap-4">
-                <div className="flex -space-x-3">
-                  <img
-                    src="https://api.dicebear.com/7.x/avataaars/svg?seed=1"
-                    className="w-9 h-9 rounded-full border-2 border-stone-950 grayscale opacity-70"
-                    alt="User"
-                  />
-                  <img
-                    src="https://api.dicebear.com/7.x/avataaars/svg?seed=2"
-                    className="w-9 h-9 rounded-full border-2 border-stone-950 grayscale opacity-70"
-                    alt="User"
-                  />
-                  <img
-                    src="https://api.dicebear.com/7.x/avataaars/svg?seed=3"
-                    className="w-9 h-9 rounded-full border-2 border-stone-950 grayscale opacity-70"
-                    alt="User"
-                  />
-                </div>
-                <span className="text-[10px] uppercase tracking-[.18em] text-white/30">
-                  Trusted by 100+ AI Labs
-                </span>
               </div>
               <div className="float-slow absolute -right-8 sm:-right-20 top-10 sm:top-28 w-44 sm:w-56 p-5 sm:p-6 bg-lime-300 text-stone-950 rounded-[24px] rotate-6 shadow-[0_30px_70px_rgba(0,0,0,.5)] z-20">
                 <span className="mono-technical text-stone-950/50">FIELD NOTE / 01</span>
@@ -716,7 +694,7 @@ export default function LandingPage() {
               </p>
               <div className="flex gap-3 mt-7">
                 <a
-                  href="https://github.com/Sibyl-Labs/lumen"
+                  href="https://github.com/danielamodu/Lumen"
                   target="_blank"
                   rel="noopener noreferrer"
                   id="footer-gh"
@@ -726,7 +704,7 @@ export default function LandingPage() {
                   <iconify-icon icon="mdi:github" />
                 </a>
                 <a
-                  href="https://x.com"
+                  href="https://x.com/szrxbt"
                   target="_blank"
                   rel="noopener noreferrer"
                   id="footer-x"
@@ -736,7 +714,7 @@ export default function LandingPage() {
                   <iconify-icon icon="simple-icons:x" />
                 </a>
                 <a
-                  href="https://linkedin.com"
+                  href="https://www.linkedin.com/in/daniel-amodu-07306b433/"
                   target="_blank"
                   rel="noopener noreferrer"
                   id="footer-linkedin"

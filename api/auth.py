@@ -9,8 +9,13 @@ from typing import Optional
 from fastapi import Header, HTTPException
 from fastapi.security import APIKeyHeader
 
-DEMO_KEY = "lmn_demo0000000000000000000000000000"
-ADMIN_KEY = "lmn_admin000000000000000000000000000"
+# DEMO_KEY is an intentionally public, shared demo credential (documented in
+# the README). It grants access only to the isolated "demo" tenant.
+DEMO_KEY = os.environ.get("LUMEN_DEMO_KEY", "lmn_demo0000000000000000000000000000")
+
+# ADMIN_KEY can mint tenants, so it must never be hardcoded in source. It is
+# read from the environment only. If unset, admin endpoints are disabled.
+ADMIN_KEY = os.environ.get("LUMEN_ADMIN_KEY")
 
 TENANTS_FILE = Path.home() / ".sibyl-memory" / "tenants.json"
 
@@ -52,9 +57,9 @@ def resolve_tenant(api_key: Optional[str]) -> dict:
             "active": True,
             "is_admin": False
         }
-    if api_key == ADMIN_KEY:
+    if ADMIN_KEY and api_key == ADMIN_KEY:
         return {
-            "tenant_id": "admin", 
+            "tenant_id": "admin",
             "name": "Admin",
             "active": True,
             "is_admin": True

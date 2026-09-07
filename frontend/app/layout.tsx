@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: "Lumen — Architectural Memory for Agents",
   description:
     "The outcome memory layer that makes any agent learn from experience. Not fine-tuning. Not RAG. Just memory.",
+  icons: {
+    icon: '/favicon.png',
+    shortcut: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({

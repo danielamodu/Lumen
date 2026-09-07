@@ -40,10 +40,22 @@ from api.auth import (
 
 app = FastAPI(title="Lumen API", description="Outcome memory layer for AI agents")
 
+# CORS: browsers reject allow_origins=["*"] together with
+# allow_credentials=True, so keep them consistent. Auth is via the
+# X-Lumen-Key header (not cookies), so credentials are not needed and a
+# wildcard origin is safe. Set LUMEN_CORS_ORIGINS (comma-separated) to
+# lock this down to specific frontends in production.
+_cors_env = os.environ.get("LUMEN_CORS_ORIGINS", "").strip()
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["*"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -523,7 +535,12 @@ def get_memory_events(
     tenant = resolve_tenant(api_key)
     memory = get_client()
     all_events = memory.read_events()
-    
+
+    # Always scope reads to the caller's tenant. Stored user_ids are
+    # prefixed "<tenant_id>:<user_id>", so this prevents one tenant from
+    # reading another tenant's journal.
+    tenant_prefix = f"{tenant['tenant_id']}:"
+
     parsed = []
     for ev in all_events:
         acted_list = ev.get("acted") or []
@@ -535,12 +552,12 @@ def get_memory_events(
             parts = act.split("|")
             if len(parts) < 7 or parts[5] != "SEP":
                 continue
-            
+
             try:
                 sig = int(parts[3])
             except ValueError:
                 continue
-            
+
             entry = {
                 "user_id": parts[1],
                 "domain": parts[2],
@@ -549,7 +566,11 @@ def get_memory_events(
                 "outcome": parts[6],
                 "raw": act
             }
-            
+
+            # Tenant isolation: skip anything not owned by this tenant.
+            if not entry["user_id"].startswith(tenant_prefix):
+                continue
+
             # Filter by user_id if provided
             if req.user_id:
                 scoped = scope_user_id(
@@ -557,12 +578,12 @@ def get_memory_events(
                 )
                 if entry["user_id"] != scoped:
                     continue
-            
+
             # Filter by domain if provided
             if req.domain:
                 if entry["domain"] != req.domain.lower():
                     continue
-            
+
             parsed.append(entry)
     
     # Most recent first
@@ -594,7 +615,8 @@ def get_memory_patterns(
         )
         user_ids_to_check = [scoped]
     else:
-        # Get all users from events
+        # Get all users from events, scoped to this tenant only.
+        tenant_prefix = f"{tenant['tenant_id']}:"
         all_events = memory.read_events()
         seen_users = set()
         for ev in all_events:
@@ -603,7 +625,8 @@ def get_memory_patterns(
                 if isinstance(act, str) and \
                         act.startswith("LUMEN|"):
                     parts = act.split("|")
-                    if len(parts) >= 7:
+                    if len(parts) >= 7 and \
+                            parts[1].startswith(tenant_prefix):
                         seen_users.add(parts[1])
         user_ids_to_check = list(seen_users)
     
