@@ -159,6 +159,7 @@ curl -X POST https://lumen-memory-production.up.railway.app/brief \
 git clone https://github.com/danielamodu/Lumen.git
 cd Lumen
 pip install -r requirements.txt
+pip install -e ./sdk          # lumen_memory client SDK (SDK examples + Virtuals agent)
 
 # Seed 33 demo outcomes
 python demo/seed.py
@@ -187,14 +188,14 @@ pytest tests/ -v
 - **Agents:** Antigravity (Google Gemini)
 - **API:** FastAPI + Uvicorn
 - **Frontend:** Next.js 14 + Tailwind CSS
-- **Chain:** Base (x402 payment layer — roadmap)
+- **Chain:** Base mainnet — live on-chain USDC payment verification gating `/market/brief` (x402-style 402 flow, chain ID 8453, replay-protected)
 - **Language:** Python 3.10+
 
 ---
 
 ### What's Next
 
-- **x402 integration** — expose `/brief` as a paid endpoint on Base. Agents pay USDC to query another user's learned patterns. Cross-user learning as a market.
+- **Cross-user pattern market** — the paid `/market/brief` endpoint with on-chain USDC settlement on Base (x402-style) is already live; next is scaling it to many contributors so agents can price and trade each other's learned patterns.
 - **Virtuals Protocol** — Lumen as a shared memory substrate for Virtuals agent swarms. Every agent in the swarm learns from every other agent's outcomes.
 - **Pattern confidence scoring** — weight recent outcomes more heavily than old ones. Memory that forgets gracefully.
 
@@ -207,7 +208,7 @@ Lumen is not just personal memory. It's a network.
 Every outcome recorded by every agent contributes to aggregate patterns. Any agent can query what works across all users for a domain — and pay for that intelligence in USDC on Base.
 
 ```bash
-# Query aggregate patterns — costs 0.01 USDC
+# Demo mode — skips real settlement (real tx-hash path shown below)
 curl -X POST \
   https://lumen-memory-production.up.railway.app/market/brief \
   -H "Content-Type: application/json" \
@@ -235,6 +236,19 @@ Response:
 }
 ```
 
+**Real payment (on-chain verification).** Send 0.01 USDC on Base mainnet to `0xf821447c6bd7c54e5fc2bd92239f4d8ed73c52f0`, then pass the transaction hash as the proof. Lumen verifies the transfer amount, recipient, and age on-chain (Base mainnet, chain ID 8453) and rejects reused hashes:
+
+```bash
+curl -X POST \
+  https://lumen-memory-production.up.railway.app/market/brief \
+  -H "Content-Type: application/json" \
+  -H "X-Lumen-Key: lmn_demo0000000000000000000000000000" \
+  -H "X-Payment-Proof: 0x<your_base_usdc_tx_hash>" \
+  -d '{"domain":"pitch","context":"pitching crypto funds"}'
+```
+
+With no `X-Payment-Proof` header at all, the endpoint returns HTTP 402 with full payment instructions (recipient, USDC contract, chain ID) — a real x402-style paywall.
+
 The x402 payment standard means any agent can participate in this market autonomously — no human required to approve the transaction.
 
 ---
@@ -245,7 +259,8 @@ Lumen is available as a G.A.M.E function set for any
 Virtuals Protocol agent.
 
 ```bash
-pip install game-sdk lumen-memory
+pip install game-sdk         # pin to the version you tested
+pip install -e ./sdk         # local lumen_memory client SDK (this repo)
 ```
 
 ```python

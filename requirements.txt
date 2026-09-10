@@ -1,8 +1,21 @@
+# Runtime dependencies. Versions are bounded to avoid silently pulling a
+# breaking major release — the API uses Pydantic v2-only APIs (field_validator,
+# ConfigDict), so an unbounded pydantic could resolve to an incompatible version.
+# For fully reproducible builds, generate a lockfile (e.g. pip-compile).
 sibyl-memory-client==0.8.0
-pytest
-fastapi
-uvicorn[standard]
-pydantic
-requests
-web3==6.20.0
-game-sdk
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+pydantic>=2.5,<3.0
+requests>=2.31,<3.0
+# web3 is range-pinned rather than ==exact: an exact old pin (e.g. 6.20.0)
+# forces source builds of native deps (ckzg, lru-dict) that ship no wheels on
+# newer Python (3.13) and fail without a C/MSVC compiler. The <8 cap still
+# blocks an unvetted future major; payments.py uses only stable 6.x/7.x APIs.
+web3>=6.20,<8
+# Virtuals GAME SDK — used only by the scripts under virtuals/, not the API.
+# Pinned to the version Lumen Scout was built and tested against (the
+# integration relies on shims in virtuals/lumen_scout.py tuned to this API).
+game-sdk==0.1.5
+
+# Test-only dependencies live in requirements-dev.txt (install with
+#   pip install -r requirements-dev.txt) so they are not shipped to production.

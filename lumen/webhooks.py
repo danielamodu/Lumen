@@ -203,10 +203,14 @@ def _fire_webhook(webhook_id: str,
     try:
         payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
         signature = sign_webhook_payload(payload_bytes)
+        # allow_redirects=False: the callback URL is SSRF-validated at
+        # registration, but following a 30x here would let it redirect into the
+        # internal network / cloud metadata, bypassing that check.
         response = requests.post(
             callback_url,
             data=payload_bytes,
             timeout=10,
+            allow_redirects=False,
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": "lumen-webhooks/0.1.0",

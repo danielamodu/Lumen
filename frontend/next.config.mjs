@@ -41,7 +41,7 @@ const nextConfig = {
           {
             key: "Content-Security-Policy",
             value:
-              "default-src 'self'; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://code.iconify.design; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:;",
+              "default-src 'self'; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://code.iconify.design; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:; frame-ancestors 'none';",
           },
         ],
       },

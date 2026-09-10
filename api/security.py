@@ -10,12 +10,14 @@ Covers:
 - File upload restrictions
 """
 
-import html
 import hmac
 import hashlib
 import ipaddress
+import logging
 import os
 import re
+import secrets
+import threading
 import time
 from collections import defaultdict
 from typing import Optional, Set
@@ -88,13 +90,24 @@ BLOCKED_IP_NETWORKS = [
 
 
 def sanitize_text(text: str, max_length: int = 500) -> str:
-    """Escape HTML entities, strip null bytes and control chars, enforce max length."""
+    """Strip null bytes / control chars, neutralize the reserved journal
+    delimiter, and enforce max length.
+
+    Values are returned as raw (un-escaped) text: output encoding is the
+    consumer's job (the UI escapes at render time). HTML-escaping here would
+    double-encode text served over the JSON API (e.g. "Q&A" -> "Q&amp;A").
+    The '|' delimiter used by the pipe-delimited COLD journal
+    (LUMEN|user|domain|signal|action|SEP|outcome) is replaced with '/' so a
+    free-text value containing a pipe cannot break field parsing or silently
+    drop the outcome.
+    """
     if not text:
         return ""
     # Remove null bytes and non-printable control characters (except newline, tab, carriage return)
     cleaned = "".join(ch for ch in text if ch in "\n\r\t" or (ord(ch) >= 32 and ord(ch) != 127))
-    escaped = html.escape(cleaned.strip())
-    return escaped[:max_length]
+    # Neutralize the journal field delimiter to prevent delimiter injection.
+    cleaned = cleaned.replace("|", "/")
+    return cleaned.strip()[:max_length]
 
 
 def validate_domain_name(domain: str) -> str:
@@ -147,7 +160,19 @@ def validate_callback_url(url: str, allow_local: bool = False) -> str:
 # 3. Webhook HMAC-SHA256 Signing
 # ---------------------------------------------------------------------------
 
-DEFAULT_WEBHOOK_SECRET = os.environ.get("LUMEN_WEBHOOK_SECRET", "lmn_webhook_secret_default_key")
+_configured_webhook_secret = os.environ.get("LUMEN_WEBHOOK_SECRET")
+if _configured_webhook_secret:
+    DEFAULT_WEBHOOK_SECRET = _configured_webhook_secret
+else:
+    # No configured secret: use a strong ephemeral per-process secret so
+    # signatures can never be forged from a publicly known constant. Receivers
+    # that need to verify signatures across restarts/instances must set
+    # LUMEN_WEBHOOK_SECRET.
+    DEFAULT_WEBHOOK_SECRET = secrets.token_hex(32)
+    logging.getLogger("lumen.security").warning(
+        "LUMEN_WEBHOOK_SECRET is not set; using an ephemeral random secret. "
+        "Set LUMEN_WEBHOOK_SECRET for stable, verifiable webhook signatures."
+    )
 
 def sign_webhook_payload(payload_bytes: bytes, secret: Optional[str] = None) -> str:
     """Generate HMAC-SHA256 signature for outgoing webhook payload."""
@@ -192,31 +217,49 @@ def validate_file_upload(filename: str, content: bytes, max_size_bytes: int = 2 
 # ---------------------------------------------------------------------------
 
 class SlidingWindowRateLimiter:
-    """Memory-efficient sliding window rate limiter per client key / IP."""
+    """Memory-efficient, thread-safe sliding window rate limiter per client key / IP."""
 
     def __init__(self, requests_per_minute: int = 120):
         self.requests_per_minute = requests_per_minute
         self.windows = defaultdict(list)
+        self._lock = threading.Lock()
+        self._last_cleanup = 0.0
+
+    def _cleanup_locked(self, now: float, window_seconds: int) -> None:
+        """Evict keys whose most recent hit is outside the window. Caller holds the lock."""
+        cutoff = now - window_seconds
+        stale = [k for k, hist in self.windows.items() if not hist or hist[-1] <= cutoff]
+        for k in stale:
+            del self.windows[k]
+        self._last_cleanup = now
 
     def is_allowed(self, key: str, max_requests: Optional[int] = None, window_seconds: int = 60) -> tuple[bool, int, int]:
         """Check if request is allowed. Returns (allowed, remaining, retry_after)."""
         limit = max_requests or self.requests_per_minute
         now = time.time()
         window_start = now - window_seconds
-        
-        # Prune old timestamps
-        history = self.windows[key]
-        self.windows[key] = [t for t in history if t > window_start]
-        
-        current_count = len(self.windows[key])
-        if current_count >= limit:
-            oldest = self.windows[key][0]
-            retry_after = max(1, int(oldest + window_seconds - now))
-            return False, 0, retry_after
-        
-        self.windows[key].append(now)
-        remaining = limit - (current_count + 1)
-        return True, remaining, 0
+
+        # Guard all shared-state access: sync handlers run in a threadpool, so
+        # is_allowed can be entered concurrently for the same key.
+        with self._lock:
+            # Opportunistically evict stale keys so the dict cannot grow without
+            # bound (each distinct client key would otherwise leak an entry).
+            if now - self._last_cleanup > window_seconds:
+                self._cleanup_locked(now, window_seconds)
+
+            # Prune old timestamps in place (keeps the same list object).
+            history = self.windows[key]
+            history[:] = [t for t in history if t > window_start]
+
+            current_count = len(history)
+            if current_count >= limit:
+                oldest = history[0]
+                retry_after = max(1, int(oldest + window_seconds - now))
+                return False, 0, retry_after
+
+            history.append(now)
+            remaining = limit - (current_count + 1)
+            return True, remaining, 0
 
 
 # Global rate limiter instances
@@ -245,9 +288,9 @@ PROBE_PATHS = (
 def detect_bot_or_scanner(request: Request) -> Optional[str]:
     """Return description if request matches known malicious automated scanners."""
     user_agent = request.headers.get("user-agent", "").strip()
-    if not user_agent:
-        return "Empty User-Agent header"
-    if SCANNER_USER_AGENTS.search(user_agent):
+    # An empty User-Agent is intentionally NOT blocked: health checks, uptime
+    # monitors, and many legitimate API clients omit the header.
+    if user_agent and SCANNER_USER_AGENTS.search(user_agent):
         return f"Blocked vulnerability scanner user agent: {user_agent[:40]}"
     
     path = request.url.path.lower()
@@ -262,14 +305,37 @@ def detect_bot_or_scanner(request: Request) -> Optional[str]:
 # 7. Complete Security Middleware (Headers, HTTPS, Rate Limiting, Bot Defense)
 # ---------------------------------------------------------------------------
 
+def _get_client_ip(request: Request) -> str:
+    """Resolve the client IP for rate limiting / HTTPS checks without trusting
+    spoofable X-Forwarded-For.
+
+    By default the direct peer address (request.client.host) is used, which a
+    client cannot forge. Only when LUMEN_TRUST_PROXY_DEPTH is set to N>0 (the
+    number of trusted reverse proxies in front of the app, e.g. 1 on Railway)
+    is X-Forwarded-For consulted, and then the client is taken as the Nth entry
+    from the right — the value appended by the first trusted proxy — so
+    attacker-supplied left-hand entries are ignored.
+    """
+    peer = request.client.host if request.client else "127.0.0.1"
+    try:
+        depth = int(os.environ.get("LUMEN_TRUST_PROXY_DEPTH", "0"))
+    except ValueError:
+        depth = 0
+    if depth <= 0:
+        return peer
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
+    if not parts:
+        return peer
+    idx = max(0, len(parts) - depth)
+    return parts[idx]
+
+
 class LumenSecurityMiddleware(BaseHTTPMiddleware):
     """Centralized security middleware enforcing headers, rate limits, bot blocks, and HTTPS."""
 
     async def dispatch(self, request: Request, call_next):
-        client_ip = request.client.host if request.client else "127.0.0.1"
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
+        client_ip = _get_client_ip(request)
 
         # 1. Force HTTPS check
         force_https = os.environ.get("LUMEN_FORCE_HTTPS", "true").lower() in ("true", "1", "yes")

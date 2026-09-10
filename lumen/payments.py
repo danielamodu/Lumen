@@ -1,6 +1,7 @@
 """Base mainnet USDC payment verification for Lumen."""
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,12 @@ MAX_TX_AGE_SECONDS = 3600
 
 # Used transaction hashes store
 USED_TX_FILE = Path.home() / ".sibyl-memory" / "used_txs.json"
+
+# Serializes the check-reserve-record sequence and guards the used-tx file so
+# concurrent requests (FastAPI runs sync handlers in a threadpool) cannot
+# replay a single payment across multiple /market/brief calls.
+_verify_lock = threading.Lock()
+_in_progress: set = set()
 
 # USDC Transfer event ABI (minimal)
 USDC_TRANSFER_ABI = [
@@ -85,12 +92,15 @@ def _load_used_txs() -> set:
 
 
 def _save_used_tx(tx_hash: str) -> None:
-    """Mark a transaction hash as used."""
+    """Mark a transaction hash as used (atomic write, lock-guarded)."""
     USED_TX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    used = _load_used_txs()
-    used.add(tx_hash.lower())
-    with open(USED_TX_FILE, "w") as f:
-        json.dump({"used": list(used)}, f)
+    with _verify_lock:
+        used = _load_used_txs()
+        used.add(tx_hash.lower())
+        tmp = USED_TX_FILE.with_name(USED_TX_FILE.name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump({"used": list(used)}, f)
+        tmp.replace(USED_TX_FILE)
 
 
 def verify_usdc_payment(tx_hash: str) -> dict:
@@ -112,17 +122,31 @@ def verify_usdc_payment(tx_hash: str) -> dict:
             "valid": False,
             "reason": "Invalid transaction hash format."
         }
-    
+
     tx_hash_lower = tx_hash.lower()
-    
-    # Check if already used
-    used = _load_used_txs()
-    if tx_hash_lower in used:
-        return {
-            "valid": False,
-            "reason": "Transaction hash already used."
-        }
-    
+
+    # Atomically reserve this tx: reject if already used, or if another request
+    # is verifying it right now. This closes the replay race where two
+    # concurrent requests both pass the used-check before either records it.
+    with _verify_lock:
+        used = _load_used_txs()
+        if tx_hash_lower in used or tx_hash_lower in _in_progress:
+            return {
+                "valid": False,
+                "reason": "Transaction hash already used."
+            }
+        _in_progress.add(tx_hash_lower)
+
+    try:
+        return _verify_usdc_payment_onchain(tx_hash, tx_hash_lower)
+    finally:
+        with _verify_lock:
+            _in_progress.discard(tx_hash_lower)
+
+
+def _verify_usdc_payment_onchain(tx_hash: str, tx_hash_lower: str) -> dict:
+    """Perform the onchain verification for a tx already reserved by
+    verify_usdc_payment. Records the hash as used only on a valid payment."""
     try:
         w3 = Web3(Web3.HTTPProvider(BASE_RPC_URL))
         

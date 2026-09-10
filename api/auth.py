@@ -3,8 +3,10 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -23,6 +25,11 @@ ADMIN_KEY = os.environ.get("LUMEN_ADMIN_KEY")
 
 TENANTS_FILE = Path.home() / ".sibyl-memory" / "tenants.json"
 
+# Guards read-modify-write of the tenants file so concurrent create/migrate
+# operations (FastAPI runs sync handlers in a threadpool) can't lose updates
+# or interleave into a corrupt file.
+_tenants_lock = threading.Lock()
+
 api_key_header = APIKeyHeader(name="X-Lumen-Key", auto_error=False)
 
 
@@ -33,15 +40,22 @@ def _load_tenants() -> dict:
     try:
         with open(TENANTS_FILE, "r") as f:
             return json.load(f)
-    except Exception:
+    except Exception as exc:
+        # Never silently treat a corrupt file as "no tenants" without a trace —
+        # that would 401 every existing tenant. Log loudly so it's diagnosable.
+        logging.getLogger("lumen.auth").error(
+            "Failed to read tenants file %s: %s", TENANTS_FILE, exc
+        )
         return {}
 
 
 def _save_tenants(tenants: dict) -> None:
-    """Save tenants securely to JSON file."""
+    """Save tenants securely to JSON file (atomic write to avoid corruption)."""
     TENANTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(TENANTS_FILE, "w") as f:
+    tmp = TENANTS_FILE.with_name(TENANTS_FILE.name + ".tmp")
+    with open(tmp, "w") as f:
         json.dump(tenants, f, indent=2)
+    tmp.replace(TENANTS_FILE)
 
 
 def resolve_tenant(api_key: Optional[str]) -> dict:
@@ -79,10 +93,17 @@ def resolve_tenant(api_key: Optional[str]) -> dict:
     # Check hashed key first, fallback to raw key with auto-migration
     tenant = tenants.get(hashed_key)
     if not tenant and api_key in tenants:
-        # Legacy raw key found: auto-migrate to hashed key
-        tenant = tenants.pop(api_key)
-        tenants[hashed_key] = tenant
-        _save_tenants(tenants)
+        # Legacy raw key found: auto-migrate to hashed key under the lock, and
+        # re-read inside it so a concurrent create/migrate can't be lost or
+        # corrupt the file.
+        with _tenants_lock:
+            tenants = _load_tenants()
+            if api_key in tenants:
+                tenant = tenants.pop(api_key)
+                tenants[hashed_key] = tenant
+                _save_tenants(tenants)
+            else:
+                tenant = tenants.get(hashed_key)
     
     if not tenant:
         raise HTTPException(
@@ -127,10 +148,11 @@ def create_tenant(name: str) -> tuple[str, dict]:
     
     # Store hashed key in tenants.json so raw secret is never stored at rest
     hashed_key = hash_api_key(api_key)
-    tenants = _load_tenants()
-    tenants[hashed_key] = tenant_info
-    _save_tenants(tenants)
-    
+    with _tenants_lock:
+        tenants = _load_tenants()
+        tenants[hashed_key] = tenant_info
+        _save_tenants(tenants)
+
     return api_key, tenant_info
 
 

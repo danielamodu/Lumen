@@ -1,0 +1,11 @@
+# Development / test dependencies.
+# Install with:  pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=7.0,<10
+# httpx backs FastAPI's TestClient, used by the API tests and smoke checks.
+httpx>=0.24,<1.0
+
+# Local Lumen client SDK (sdk/), imported by the SDK examples, the test suite,
+# and the Virtuals G.A.M.E agent under virtuals/. Editable so it tracks the
+# working tree. Run pip from the repo root so the ./sdk path resolves.
+-e ./sdk
