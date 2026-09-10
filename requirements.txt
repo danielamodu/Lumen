@@ -7,6 +7,10 @@ fastapi>=0.110,<1.0
 uvicorn[standard]>=0.27,<1.0
 pydantic>=2.5,<3.0
 requests>=2.31,<3.0
+# Postgres driver for the Neon system-state tables (tenants, used_txs,
+# webhooks). Binary wheel — no compiler needed. Sibyl memory stays the
+# source of truth; Postgres only holds rebuildable derived state.
+"psycopg[binary]>=3.1,<4"
 # web3 is range-pinned rather than ==exact: an exact old pin (e.g. 6.20.0)
 # forces source builds of native deps (ckzg, lru-dict) that ship no wheels on
 # newer Python (3.13) and fail without a C/MSVC compiler. The <8 cap still
