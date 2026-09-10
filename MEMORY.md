@@ -45,3 +45,14 @@ Tagline: "Your agents forget. Lumen remembers."
   Next.js site needs its own service config (root dir `frontend`).
 - Shell is Windows PowerShell 5.1: one command per line, no `&&` chaining,
   no `head`/`grep` (use tool equivalents).
+
+## Frontend audit triage (2026-09-10, accepted risk — do not "fix")
+- `npm audit` reports 4 findings (1 critical in `next`, 3 high via `glob`).
+  Safe `npm audit fix` changes nothing; the only remediation is
+  `npm audit fix --force` → Next 14.2.35 → 16.3.4 (two majors + React 19).
+- `glob` command injection is dev-only (eslint CLI flag), unreachable at runtime.
+- The `next` advisories require features this app doesn't use (Image Optimizer
+  remotePatterns, middleware rewrites, i18n Pages Router, AVIF, WS upgrades,
+  Server Actions abuse). 14.2.35 is the latest 14.x, so no non-breaking patch
+  exists. A pre-submission framework migration risks the demo for theoretical
+  vulns — revisit post-submission.
