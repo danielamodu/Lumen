@@ -46,6 +46,26 @@ Tagline: "Your agents forget. Lumen remembers."
 - Shell is Windows PowerShell 5.1: one command per line, no `&&` chaining,
   no `head`/`grep` (use tool equivalents).
 
+## Phase 1 (complete): Postgres sidecars on Neon, Sibyl stays source of truth
+- Provider: Neon (Lakebase Postgres, us-east-2). Pooled `DATABASE_URL` for app
+  traffic, direct `DATABASE_URL_UNPOOLED` for migrations. Secret lives only in
+  gitignored `.env` locally / Railway env in prod. `python scripts/migrate.py`.
+- `api/db.py` (pooled/direct helper), `api/env.py` (explicit local .env loader
+  for scripts/tests only — app runtime reads os.environ exclusively).
+- Tenants, used_txs, webhooks + `webhook_deliveries` outbox in Postgres;
+  JSON files remain as transitional fallback (warn-once) + cold backup.
+  Replay guard is now cross-process atomic (PK + INSERT..ON CONFLICT) with
+  TTL self-healing reservations; deliveries retry with backoff then
+  dead-letter (never silent loss).
+- `scripts/snapshot_sibyl.py` snapshot/restore with SHA-256 manifest + sidecar;
+  snapshot checkpoints live SQLite (no downtime); restore requires a STOPPED
+  store into an empty dir (live-overwrite leaves stale WAL shadow on Windows).
+- Gates: `tests/test_load_bearing.py` (delete-Sibyl blindness contract),
+  `tests/test_sibyl_restore.py` (extinction->restore drill),
+  `evals/test_memory_evals.py` (precision 1.00, policy margin +0.49).
+  Full suite 47 passed / 1 skipped; frontend builds clean.
+- Suite takes ~7 min (Neon scale-to-zero wakeups); evals alone run in seconds.
+
 ## Frontend audit triage (2026-09-10, accepted risk — do not "fix")
 - `npm audit` reports 4 findings (1 critical in `next`, 3 high via `glob`).
   Safe `npm audit fix` changes nothing; the only remediation is
