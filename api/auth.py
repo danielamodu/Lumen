@@ -14,6 +14,7 @@ from fastapi import Header, HTTPException
 from fastapi.security import APIKeyHeader
 
 from api.security import hash_api_key, secure_compare, validate_user_identifier
+from api import db as _db
 
 # DEMO_KEY is an intentionally public, shared demo credential (documented in
 # the README). It grants access only to the isolated "demo" tenant.
@@ -27,10 +28,23 @@ TENANTS_FILE = Path.home() / ".sibyl-memory" / "tenants.json"
 
 # Guards read-modify-write of the tenants file so concurrent create/migrate
 # operations (FastAPI runs sync handlers in a threadpool) can't lose updates
-# or interleave into a corrupt file.
+# or interleave into a corrupt file. Only used by the file fallback path.
 _tenants_lock = threading.Lock()
 
+# Set once we warn about file fallback so concurrent requests don't spam logs.
+_pg_fallback_warned = False
+
 api_key_header = APIKeyHeader(name="X-Lumen-Key", auto_error=False)
+
+
+def _warn_fallback(reason: str) -> None:
+    """Log file-fallback once per process (keeps request logs readable)."""
+    global _pg_fallback_warned
+    if not _pg_fallback_warned:
+        _pg_fallback_warned = True
+        logging.getLogger("lumen.auth").warning(
+            "Tenants: %s. Using file fallback (transitional).", reason
+        )
 
 
 def _load_tenants() -> dict:
@@ -56,6 +70,101 @@ def _save_tenants(tenants: dict) -> None:
     with open(tmp, "w") as f:
         json.dump(tenants, f, indent=2)
     tmp.replace(TENANTS_FILE)
+
+
+# ---------------------------------------------------------------------------
+# Postgres primary (Neon). The file store below stays as transitional fallback.
+# ---------------------------------------------------------------------------
+
+def _pg_lookup(hashed_key: str) -> Optional[dict]:
+    """Fetch one tenant row by hashed key. Returns None if unknown."""
+    with _db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tenant_id, name, active FROM tenants WHERE key_hash = %s",
+                (hashed_key,),
+            )
+            row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "tenant_id": row["tenant_id"],
+        "name": row["name"],
+        "active": row["active"],
+    }
+
+
+def _pg_insert(hashed_key: str, tenant_info: dict) -> None:
+    """Insert a tenant row. Raises on duplicate key (caller decides)."""
+    with _db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tenants (key_hash, tenant_id, name, active) "
+                "VALUES (%s, %s, %s, %s)",
+                (
+                    hashed_key,
+                    tenant_info["tenant_id"],
+                    tenant_info["name"],
+                    tenant_info.get("active", True),
+                ),
+            )
+
+
+def _resolve_pg(api_key: str, hashed_key: str) -> dict:
+    """Resolve via Postgres. Raises HTTPException 401 if invalid/inactive.
+
+    Only connection/SQL errors propagate as non-HTTP exceptions (which the
+    caller turns into file fallback); auth failures always raise 401.
+    """
+    tenant = _pg_lookup(hashed_key)
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Invalid API key.")
+    if not tenant.get("active", True):
+        raise HTTPException(status_code=401, detail="API key is inactive.")
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "name": tenant["name"],
+        "active": tenant.get("active", True),
+        "is_admin": False,
+    }
+
+
+def _resolve_file(api_key: str, hashed_key: str) -> dict:
+    """Resolve via the legacy JSON file (transitional fallback)."""
+    tenants = _load_tenants()
+
+    # Check hashed key first, fallback to raw key with auto-migration
+    tenant = tenants.get(hashed_key)
+    if not tenant and api_key in tenants:
+        # Legacy raw key found: auto-migrate to hashed key under the lock, and
+        # re-read inside it so a concurrent create/migrate can't be lost or
+        # corrupt the file.
+        with _tenants_lock:
+            tenants = _load_tenants()
+            if api_key in tenants:
+                tenant = tenants.pop(api_key)
+                tenants[hashed_key] = tenant
+                _save_tenants(tenants)
+            else:
+                tenant = tenants.get(hashed_key)
+
+    if not tenant:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key."
+        )
+    if not tenant.get("active", True):
+        raise HTTPException(
+            status_code=401,
+            detail="API key is inactive."
+        )
+
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "name": tenant["name"],
+        "active": tenant.get("active", True),
+        "is_admin": False
+    }
 
 
 def resolve_tenant(api_key: Optional[str]) -> dict:
@@ -86,42 +195,20 @@ def resolve_tenant(api_key: Optional[str]) -> dict:
             "is_admin": True
         }
     
-    # Check tenant store via SHA-256 hash
+    # Check tenant store via SHA-256 hash — Postgres primary, file fallback.
     hashed_key = hash_api_key(api_key)
-    tenants = _load_tenants()
-    
-    # Check hashed key first, fallback to raw key with auto-migration
-    tenant = tenants.get(hashed_key)
-    if not tenant and api_key in tenants:
-        # Legacy raw key found: auto-migrate to hashed key under the lock, and
-        # re-read inside it so a concurrent create/migrate can't be lost or
-        # corrupt the file.
-        with _tenants_lock:
-            tenants = _load_tenants()
-            if api_key in tenants:
-                tenant = tenants.pop(api_key)
-                tenants[hashed_key] = tenant
-                _save_tenants(tenants)
-            else:
-                tenant = tenants.get(hashed_key)
-    
-    if not tenant:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key."
-        )
-    if not tenant.get("active", True):
-        raise HTTPException(
-            status_code=401,
-            detail="API key is inactive."
-        )
-    
-    return {
-        "tenant_id": tenant["tenant_id"],
-        "name": tenant["name"],
-        "active": tenant.get("active", True),
-        "is_admin": False
-    }
+    if _db.is_configured():
+        try:
+            return _resolve_pg(api_key, hashed_key)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _warn_fallback(
+                f"Postgres lookup failed ({type(exc).__name__})"
+            )
+    else:
+        _warn_fallback("DATABASE_URL not set")
+    return _resolve_file(api_key, hashed_key)
 
 
 def require_admin(api_key: Optional[str]) -> dict:
@@ -146,8 +233,19 @@ def create_tenant(name: str) -> tuple[str, dict]:
         "active": True
     }
     
-    # Store hashed key in tenants.json so raw secret is never stored at rest
+    # Store hashed key so raw secret is never stored at rest.
+    # Postgres primary, file fallback (transitional).
     hashed_key = hash_api_key(api_key)
+    if _db.is_configured():
+        try:
+            _pg_insert(hashed_key, tenant_info)
+            return api_key, tenant_info
+        except Exception as exc:
+            _warn_fallback(
+                f"Postgres insert failed ({type(exc).__name__})"
+            )
+    else:
+        _warn_fallback("DATABASE_URL not set")
     with _tenants_lock:
         tenants = _load_tenants()
         tenants[hashed_key] = tenant_info

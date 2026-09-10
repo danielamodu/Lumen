@@ -15,22 +15,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-
-def _load_dotenv(path: Path) -> None:
-    """Minimal .env loader (no new dependency): KEY=VALUE lines only."""
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip("'\"")
-        os.environ.setdefault(key, value)
+from api.env import load_local_env  # noqa: E402  (explicit, no side effects)
 
 
 def main() -> int:
-    _load_dotenv(REPO_ROOT / ".env")
+    load_local_env(REPO_ROOT / ".env")
     from api.db import get_conn
 
     migrations_dir = REPO_ROOT / "migrations"
