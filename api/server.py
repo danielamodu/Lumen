@@ -520,7 +520,6 @@ def market_brief(
 
     # No payment proof at all
     if not x_payment_proof:
-        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=402,
             content={
