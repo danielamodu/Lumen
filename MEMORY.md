@@ -39,10 +39,15 @@ Tagline: "Your agents forget. Lumen remembers."
 - `requirements.txt`: `web3>=6.20,<8` (range, NOT exact — an exact old pin
   forces source builds of `ckzg`/`lru-dict` with no py3.13 wheels, failing
   without MSVC); `game-sdk==0.1.5` (Scout shims tuned to it); pytest `<10`.
-  Run pip from the repo root so `-e ./sdk` resolves.
-- `railway.json`/root `Dockerfile` start `python api/server.py`, so
-  `railway up --service lumen-frontend` deploys the API into that slot — the
-  Next.js site needs its own service config (root dir `frontend`).
+  Run pip from the repo root so `-e ./sdk` resolves. NEVER quote the
+  bracketed extra (`"psycopg[binary]..."`): old pip in Docker images rejects
+  quoted requirements and breaks Railway builds.
+- Railway deploys: `railway up` from the repo root deploys the ROOT (the
+  Python API) into the target service — that once overwrote the live
+  frontend with Uvicorn. Frontend deploys MUST be:
+  `railway up ./frontend --path-as-root --service lumen-frontend`
+  (verified: Nixpacks Next.js build, `next start` on $PORT). The service has
+  `NEXT_PUBLIC_API_URL` set as a variable (baked at build time).
 - Shell is Windows PowerShell 5.1: one command per line, no `&&` chaining,
   no `head`/`grep` (use tool equivalents).
 
