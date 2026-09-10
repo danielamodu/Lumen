@@ -39,6 +39,7 @@ htmlcov/
 *.sqlite
 *.sqlite3
 .sibyl-memory/
+backups/
 
 # Node & Next.js
 node_modules/
