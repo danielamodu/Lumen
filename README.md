@@ -24,23 +24,29 @@ Lumen is a backend primitive. Any agent writes outcomes to it and reads learned 
 
 The hackathon requires: delete the memory layer and the product must stop working.
 
-Run this:
+Run this (one command, full extinction-and-resurrection arc through the real API):
+
 ```bash
-python demo/wipe.py
+python demo/delete_test.py          # blind-but-200: all-None briefs, void records
+python demo/delete_test.py --hard   # fail-closed: 503 on every memory endpoint
 ```
 
-What breaks:
+What breaks (both modes):
 - brief() returns warning: None, pattern: None, cross_domain: None for every domain
 - The three agents have no learned patterns — they open every session identically regardless of past outcomes
 - Cross-domain learning collapses entirely — the Ask domain's 70% win rate cannot inform the Pitch domain because there is no unified user entity to link them
 - The automated demo sequence produces empty state at every step
+- `--hard` goes further: `/brief`, `/record` and `/market/brief` answer HTTP 503
+  ("Sibyl memory missing or empty") — the product refuses, not just degrades
 
 What does NOT break:
-- The FastAPI server still runs
+- The FastAPI server still runs (`/health` answers)
 - The Next.js frontend still loads
-- record() still writes events
+- In soft mode, record() still writes events
 
-But those writes have nowhere to learn from. The loop is broken. Without Sibyl memory, Lumen is a logging tool. With it, Lumen learns.
+But those writes have nowhere to learn from. The loop is broken. Without Sibyl memory, Lumen is a logging tool. With it, Lumen learns. Restore the snapshot and every pattern returns sight-for-sight.
+
+(Manual version: `python demo/wipe.py` wipes the local store; `python demo/seed.py` + `python demo/loop_demo.py` show the loop.)
 
 ---
 
@@ -84,7 +90,9 @@ Lumen was built in 10 days. Postgres would have taken 3 of those days to archite
        ↑                     ↑             ↑
 ┌─────────────────────────────────────────────┐
 │             FastAPI · port 8000             │
-│    /brief  /record  /wipe  /seed  /demo/step│
+│ /brief /record /market/brief /webhooks      │
+│ /tenants /memory/events /memory/patterns    │
+│ /wipe /seed /demo/step /health              │
 └─────────────────────────────────────────────┘
                        ↑
 ┌─────────────────────────────────────────────┐
