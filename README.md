@@ -259,7 +259,7 @@ Lumen is available as a G.A.M.E function set for any
 Virtuals Protocol agent.
 
 ```bash
-pip install game-sdk         # pin to the version you tested
+pip install game-sdk==0.1.5  # the version Lumen Scout was tested against
 pip install -e ./sdk         # local lumen_memory client SDK (this repo)
 ```
 
