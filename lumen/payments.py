@@ -1,12 +1,15 @@
 """Base mainnet USDC payment verification for Lumen."""
 
 import json
+import logging
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from web3 import Web3
+
+from api import db as _db
 
 # Base mainnet RPC
 BASE_RPC_URL = "https://mainnet.base.org"
@@ -31,6 +34,24 @@ USED_TX_FILE = Path.home() / ".sibyl-memory" / "used_txs.json"
 # replay a single payment across multiple /market/brief calls.
 _verify_lock = threading.Lock()
 _in_progress: set = set()
+
+# A pending (uncompleted) Postgres reservation older than this is treated as
+# abandoned (crashed verifier) and reaped on the next reserve attempt, so a
+# crash between reserve and release can never brick a payment hash forever.
+_RESERVATION_TTL_SECONDS = 600
+
+# Set once we warn about file fallback so concurrent requests don't spam logs.
+_pg_fallback_warned = False
+
+
+def _warn_fallback(reason: str) -> None:
+    """Log file-fallback once per process (keeps request logs readable)."""
+    global _pg_fallback_warned
+    if not _pg_fallback_warned:
+        _pg_fallback_warned = True
+        logging.getLogger("lumen.payments").warning(
+            "used_txs: %s. Using file fallback (transitional).", reason
+        )
 
 # USDC Transfer event ABI (minimal)
 USDC_TRANSFER_ABI = [
@@ -103,6 +124,90 @@ def _save_used_tx(tx_hash: str) -> None:
         tmp.replace(USED_TX_FILE)
 
 
+# ---------------------------------------------------------------------------
+# Postgres primary (Neon). Completed rows (amount_units NOT NULL) are consumed
+# payments; pending rows (NULL amount) are in-flight reservations owned by a
+# verifier right now. The PK makes the reserve atomic across processes and
+# machines — the file + in-memory set only ever guarded one process.
+# ---------------------------------------------------------------------------
+
+def _pg_is_used(tx_hash_lower: str) -> bool:
+    """True if a COMPLETED payment row exists for this hash."""
+    with _db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM used_txs "
+                "WHERE tx_hash = %s AND amount_units IS NOT NULL",
+                (tx_hash_lower,),
+            )
+            return cur.fetchone() is not None
+
+
+def _pg_try_reserve(tx_hash_lower: str) -> bool:
+    """Atomically reserve this hash. True if WE won it, False if taken.
+
+    Reaps abandoned reservations (pending older than the TTL) first so a
+    crashed verifier can never brick a hash forever.
+    """
+    with _db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM used_txs WHERE amount_units IS NULL "
+                "AND used_at < now() - make_interval(secs => %s)",
+                (_RESERVATION_TTL_SECONDS,),
+            )
+            cur.execute(
+                "INSERT INTO used_txs (tx_hash) VALUES (%s) "
+                "ON CONFLICT (tx_hash) DO NOTHING",
+                (tx_hash_lower,),
+            )
+            return cur.rowcount == 1
+
+
+def _pg_record(tx_hash_lower: str, amount_units: int, from_address: str) -> None:
+    """Complete a reservation (or record directly as safety net)."""
+    with _db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO used_txs (tx_hash, amount_units, from_address) "
+                "VALUES (%s, %s, %s) "
+                "ON CONFLICT (tx_hash) DO UPDATE SET "
+                "amount_units = EXCLUDED.amount_units, "
+                "from_address = EXCLUDED.from_address, "
+                "used_at = now()",
+                (tx_hash_lower, amount_units, from_address),
+            )
+
+
+def _pg_release(tx_hash_lower: str) -> None:
+    """Release our pending reservation after a FAILED verification.
+
+    Only deletes pending rows — a completed payment is never touched, so a
+    late failure verdict can never un-consume a valid payment.
+    """
+    try:
+        with _db.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM used_txs "
+                    "WHERE tx_hash = %s AND amount_units IS NULL",
+                    (tx_hash_lower,),
+                )
+    except Exception:
+        pass  # best-effort: stale reservations self-heal via TTL
+
+
+def _record_used(tx_hash_lower: str, amount_units: int, from_address: str) -> None:
+    """Record a VALID payment as consumed (Postgres primary, file fallback)."""
+    if _db.is_configured():
+        try:
+            _pg_record(tx_hash_lower, amount_units, from_address)
+            return
+        except Exception as exc:
+            _warn_fallback(f"Postgres record failed ({type(exc).__name__})")
+    _save_used_tx(tx_hash_lower)
+
+
 def verify_usdc_payment(tx_hash: str) -> dict:
     """Verify a USDC payment on Base mainnet.
     
@@ -125,23 +230,50 @@ def verify_usdc_payment(tx_hash: str) -> dict:
 
     tx_hash_lower = tx_hash.lower()
 
-    # Atomically reserve this tx: reject if already used, or if another request
-    # is verifying it right now. This closes the replay race where two
-    # concurrent requests both pass the used-check before either records it.
+    # Reserve this tx: reject if already consumed, or if another request is
+    # verifying it right now. Postgres reserve is atomic across processes and
+    # machines; the in-memory set + file guard the single-process fallback.
+    # On invalid payments a Postgres reservation is released; only valid
+    # payments are ever recorded as consumed.
+    use_pg = _db.is_configured()
+    reserved_pg = False
     with _verify_lock:
-        used = _load_used_txs()
-        if tx_hash_lower in used or tx_hash_lower in _in_progress:
-            return {
-                "valid": False,
-                "reason": "Transaction hash already used."
-            }
+        if use_pg:
+            try:
+                if _pg_is_used(tx_hash_lower) or tx_hash_lower in _in_progress:
+                    return {
+                        "valid": False,
+                        "reason": "Transaction hash already used."
+                    }
+                if not _pg_try_reserve(tx_hash_lower):
+                    return {
+                        "valid": False,
+                        "reason": "Transaction hash already used."
+                    }
+                reserved_pg = True
+            except Exception as exc:
+                _warn_fallback(
+                    f"Postgres reserve failed ({type(exc).__name__})"
+                )
+                use_pg = False
+        if not use_pg:
+            used = _load_used_txs()
+            if tx_hash_lower in used or tx_hash_lower in _in_progress:
+                return {
+                    "valid": False,
+                    "reason": "Transaction hash already used."
+                }
         _in_progress.add(tx_hash_lower)
 
     try:
-        return _verify_usdc_payment_onchain(tx_hash, tx_hash_lower)
+        result = _verify_usdc_payment_onchain(tx_hash, tx_hash_lower)
     finally:
         with _verify_lock:
             _in_progress.discard(tx_hash_lower)
+
+    if use_pg and reserved_pg and not result.get("valid"):
+        _pg_release(tx_hash_lower)
+    return result
 
 
 def _verify_usdc_payment_onchain(tx_hash: str, tx_hash_lower: str) -> dict:
@@ -256,7 +388,7 @@ def _verify_usdc_payment_onchain(tx_hash: str, tx_hash_lower: str) -> dict:
             }
         
         # Valid payment — mark as used
-        _save_used_tx(tx_hash_lower)
+        _record_used(tx_hash_lower, amount_units, from_address)
         
         return {
             "valid": True,
