@@ -5,6 +5,20 @@ from sibyl_memory_client.exceptions import NotFoundError
 from lumen.memory import get_client
 
 
+def memory_has_events() -> bool:
+    """True if the Sibyl store holds any journal events.
+
+    False on any error (missing/corrupt store reads as empty). Used by
+    fail-closed mode (LUMEN_REQUIRE_MEMORY): the product refuses to serve
+    memory-dependent endpoints when there is no memory to serve from.
+    """
+    try:
+        events = get_client().read_events()
+        return any(True for _ in (events or []))
+    except Exception:
+        return False
+
+
 def _safe_get_entity(memory, kind: str, name: str):
     """Retrieve an entity safely, returning None if the entity is not found."""
     try:

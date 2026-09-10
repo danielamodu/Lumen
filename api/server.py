@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import uvicorn
 
-from lumen.core import record, brief
+from lumen.core import record, brief, memory_has_events
 from lumen.memory import get_client
 from lumen.webhooks import (
     register_webhook, delete_webhook, 
@@ -235,6 +235,23 @@ def _wipe_internal():
     get_client(path=db_path)
 
 
+def _require_memory_or_503() -> None:
+    """Fail-closed enforcement for memory-dependent endpoints.
+
+    When LUMEN_REQUIRE_MEMORY is truthy, /brief, /record and /market/brief
+    refuse with 503 unless the Sibyl store holds journal events. Default off:
+    normal mode serves blind-but-200 on empty memory. /health, /seed, /wipe
+    and introspection endpoints stay open deliberately (plumbing + recovery).
+    """
+    if os.environ.get("LUMEN_REQUIRE_MEMORY", "").lower() in ("1", "true", "yes"):
+        if not memory_has_events():
+            raise HTTPException(
+                status_code=503,
+                detail="Sibyl memory missing or empty. "
+                       "Lumen cannot operate without its memory layer.",
+            )
+
+
 @app.post("/brief")
 def get_brief(
     req: BriefRequest,
@@ -242,6 +259,7 @@ def get_brief(
 ):
     """Retrieve the session briefing for a user and domain."""
     tenant = resolve_tenant(api_key)
+    _require_memory_or_503()
     scoped_user = scope_user_id(tenant["tenant_id"], req.user_id)
     try:
         res = brief(scoped_user, req.domain, req.context)
@@ -257,6 +275,7 @@ def record_outcome(
 ):
     """Record a single interaction outcome to Sibyl memory and recalculate patterns."""
     tenant = resolve_tenant(api_key)
+    _require_memory_or_503()
     scoped_user = scope_user_id(tenant["tenant_id"], req.user_id)
     try:
         record(
@@ -497,7 +516,8 @@ def market_brief(
     Pass X-Payment-Proof: demo_payment_proof_base_usdc
     """
     tenant = resolve_tenant(api_key)
-    
+    _require_memory_or_503()
+
     # No payment proof at all
     if not x_payment_proof:
         from fastapi.responses import JSONResponse

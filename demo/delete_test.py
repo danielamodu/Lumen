@@ -14,8 +14,15 @@ untouched):
                  sight (pattern equality, not just non-None).
 
 Exit code 0 + "VERDICT: SIBYL IS LOAD-BEARING" iff every gate holds.
+
+  python demo/delete_test.py --hard   Fail-closed mode (LUMEN_REQUIRE_MEMORY):
+                                      the dead phase asserts HTTP 503 on
+                                      /brief, /record (and would on
+                                      /market/brief) instead of empty 200s.
+                                      /health stays 200 throughout.
 """
 
+import argparse
 import glob
 import os
 import sys
@@ -56,6 +63,15 @@ def _close_store():
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Delete-Sibyl extinction demo")
+    parser.add_argument("--hard", action="store_true",
+                        help="Fail-closed: expect 503s when memory is gone")
+    args = parser.parse_args()
+    hard = args.hard
+    if hard:
+        print("MODE: HARD (fail-closed — arms after seeding: memory endpoints "
+              "must 503 once Sibyl is gone)")
+
     tmp = Path(tempfile.mkdtemp(prefix="lumen-delete-test-"))
     store_dir = tmp / "store"
     store_dir.mkdir()
@@ -91,6 +107,9 @@ def main() -> int:
     print("=" * 64)
     print("3. EXTINCTION — rm -rf the Sibyl store, restart empty")
     print("=" * 64)
+    if hard:
+        os.environ["LUMEN_REQUIRE_MEMORY"] = "true"
+        print("   fail-closed ARMED: memory endpoints now require Sibyl events")
     _close_store()
     for f in glob.glob(str(store_dir / "judge.db") + "*"):
         os.remove(f)
@@ -99,26 +118,39 @@ def main() -> int:
     print("=" * 64)
     print("4. DEAD — the product without Sibyl")
     print("=" * 64)
-    dead = c.post("/brief", json={
+    dead_res = c.post("/brief", json={
         "user_id": USER, "domain": DOMAIN,
-        "context": "about to pitch a crypto fund"}, headers=H).json()
-    print(f"   brief: pattern={dead['pattern']}, warning={dead['warning']}, "
-          f"cross_domain={dead['cross_domain']}, "
-          f"raw_outcomes={dead['raw_outcomes']}")
-    assert (dead["pattern"] is None and dead["warning"] is None
-            and dead["cross_domain"] is None and dead["raw_outcomes"] == 0)
+        "context": "about to pitch a crypto fund"}, headers=H)
+    if hard:
+        print(f"   POST /brief -> {dead_res.status_code} "
+              f"(refused: {dead_res.json().get('detail')})")
+        assert dead_res.status_code == 503
+        dead_rec = c.post("/record", json={
+            "user_id": USER, "domain": DOMAIN,
+            "action": "tried something new", "outcome": "who knows",
+            "signal": 1}, headers=H)
+        print(f"   POST /record -> {dead_rec.status_code} "
+              f"(cannot even record into the void)")
+        assert dead_rec.status_code == 503
+    else:
+        dead = dead_res.json()
+        print(f"   brief: pattern={dead['pattern']}, warning={dead['warning']}, "
+              f"cross_domain={dead['cross_domain']}, "
+              f"raw_outcomes={dead['raw_outcomes']}")
+        assert (dead["pattern"] is None and dead["warning"] is None
+                and dead["cross_domain"] is None and dead["raw_outcomes"] == 0)
 
-    orphan = c.post("/record", json={
-        "user_id": USER, "domain": DOMAIN,
-        "action": "tried something new", "outcome": "who knows",
-        "signal": 1}, headers=H).json()
-    after_orphan = c.post("/brief", json={
-        "user_id": USER, "domain": DOMAIN, "context": "x"}, headers=H).json()
-    print(f"   record into the void: {orphan['status']} — but brief sees "
-          f"only {after_orphan['raw_outcomes']} orphan outcome(s), "
-          f"zero history, zero learning")
-    assert after_orphan["raw_outcomes"] == 1
-    assert after_orphan["confidence"] == "1 outcomes recorded. Pattern is early."
+        orphan = c.post("/record", json={
+            "user_id": USER, "domain": DOMAIN,
+            "action": "tried something new", "outcome": "who knows",
+            "signal": 1}, headers=H).json()
+        after_orphan = c.post("/brief", json={
+            "user_id": USER, "domain": DOMAIN, "context": "x"}, headers=H).json()
+        print(f"   record into the void: {orphan['status']} — but brief sees "
+              f"only {after_orphan['raw_outcomes']} orphan outcome(s), "
+              f"zero history, zero learning")
+        assert after_orphan["raw_outcomes"] == 1
+        assert after_orphan["confidence"] == "1 outcomes recorded. Pattern is early."
 
     health = c.get("/health").json()
     print(f"   plumbing check: /health -> {health} (doors open, rooms empty)")
@@ -141,8 +173,13 @@ def main() -> int:
     assert back["pattern"] == sight["pattern"]
 
     print("=" * 64)
-    print("VERDICT: SIBYL IS LOAD-BEARING — delete it and Lumen goes blind;")
-    print("         restore it and every pattern returns exactly.")
+    if hard:
+        print("VERDICT: SIBYL IS LOAD-BEARING — without it the API answers")
+        print("         503 on every memory endpoint; with it restored, every")
+        print("         pattern returns exactly.")
+    else:
+        print("VERDICT: SIBYL IS LOAD-BEARING — delete it and Lumen goes blind;")
+        print("         restore it and every pattern returns exactly.")
     print("=" * 64)
     return 0
 
